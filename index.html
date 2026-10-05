@@ -106,7 +106,9 @@ table.list .r { text-align: right }
 .items { display: grid; gap: 8px }
 .item { display: grid; grid-template-columns: minmax(0, 1fr) 70px 64px 96px 72px 32px; gap: 6px; align-items: end }
 .item .desc { grid-column: 1 }
-@media (max-width: 560px) { .item { grid-template-columns: 1fr 1fr 1fr 32px } .item .desc { grid-column: 1 / -1 } .item .price { grid-column: span 1 } }
+.item.novat { grid-template-columns: minmax(0, 1fr) 70px 64px 96px 32px }
+.datebtn { display: flex; gap: 6px } .datebtn input { flex: 1 1 0; width: 0; min-width: 0 } .datebtn .btn { padding-inline: 10px }
+@media (max-width: 560px) { .item, .item.novat { grid-template-columns: 1fr 1fr 1fr 32px } .item .desc { grid-column: 1 / -1 } .item .price { grid-column: span 1 } }
 .item label.f span { white-space: nowrap }
 .del { border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 18px; height: 36px }
 .del:hover { color: var(--bad) }
@@ -182,7 +184,7 @@ const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": 
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 const round2 = n => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
 const money = n => new Intl.NumberFormat("lv-LV", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(round2(n || 0));
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => { const d = new Date(), p = n => String(n).padStart(2, "0"); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`; };
 const addDays = (iso, d) => { const t = new Date(iso + "T00:00:00Z"); t.setUTCDate(t.getUTCDate() + Number(d || 0)); return t.toISOString().slice(0, 10); };
 const fmtDate = iso => iso ? iso.split("-").reverse().join(".") : "";
 function toast(msg) { const t = $("#toast"); t.textContent = msg; t.hidden = false; clearTimeout(toast.h); toast.h = setTimeout(() => t.hidden = true, 2600); }
@@ -544,20 +546,20 @@ function editorView() {
           <div class="grid">
             <label class="f">Rēķina numurs<input type="text" id="i-number" value="${esc(inv.number)}"></label>
             <label class="f">Statuss<select id="i-status">${["draft", "issued", "paid"].map(s => `<option value="${s}"${inv.status === s ? " selected" : ""}>${STATUS[s]}</option>`).join("")}</select></label>
-            <label class="f">Izrakstīšanas datums<input type="date" id="i-date" value="${inv.date}"></label>
+            <label class="f">Izrakstīšanas datums<span class="datebtn"><input type="date" id="i-date" value="${inv.date}"><button class="btn" type="button" data-act="today">Šodien</button></span></label>
             <label class="f">Apmaksāt līdz<input type="date" id="i-due" value="${inv.due}"></label>
             <label class="f span2">Klients<select id="i-client"><option value="">Izvēlies klientu…</option>${S.clients.map(c => `<option value="${c.id}"${c.id === inv.clientId ? " selected" : ""}>${esc(c.name)}</option>`).join("")}</select></label>
           </div>
           <p class="hint">Nav klienta sarakstā? <button class="btn ghost" style="padding:0;color:var(--accent)" data-act="goto" data-tab="clients">Pievienot klientu</button></p>
         </div>
         <div class="panel">
-          <div class="row"><h2>Pozīcijas</h2><span class="spacer"></span><button class="btn" data-act="add-item">+ Pievienot rindu</button></div>
-          <div class="items">${inv.items.map((it, k) => `<div class="item" data-k="${k}">
+          <div class="row"><h2>Pozīcijas</h2>${vp ? "" : '<span class="hint">Bez PVN: neesi PVN maksātājs</span>'}<span class="spacer"></span><button class="btn" data-act="add-item">+ Pievienot rindu</button></div>
+          <div class="items">${inv.items.map((it, k) => `<div class="item${vp ? "" : " novat"}" data-k="${k}">
             <label class="f desc"><span>Nosaukums</span><input type="text" id="it-desc-${k}" data-f="desc" value="${esc(it.desc)}" placeholder="Pakalpojums vai prece"></label>
             <label class="f"><span>Daudz.</span><input type="number" step="any" min="0" id="it-qty-${k}" data-f="qty" value="${esc(it.qty)}"></label>
             <label class="f"><span>Mērv.</span><input type="text" id="it-unit-${k}" data-f="unit" value="${esc(it.unit)}"></label>
             <label class="f price"><span>Cena €</span><input type="number" step="0.01" id="it-price-${k}" data-f="price" value="${esc(it.price)}"></label>
-            <label class="f"><span>PVN</span><select id="it-vat-${k}" data-f="vat"${vp ? "" : " disabled"}>${VAT_RATES.map(r => `<option value="${r}"${Number(it.vat) === r ? " selected" : ""}>${r}%</option>`).join("")}</select></label>
+            ${vp ? `<label class="f"><span>PVN</span><select id="it-vat-${k}" data-f="vat">${VAT_RATES.map(r => `<option value="${r}"${Number(it.vat) === r ? " selected" : ""}>${r}%</option>`).join("")}</select></label>` : ""}
             <button class="del" data-act="rm-item" data-k="${k}" aria-label="Dzēst rindu" title="Dzēst rindu"${inv.items.length < 2 ? " disabled" : ""}>×</button>
           </div>`).join("")}</div>
           <div class="row" style="justify-content:flex-end;gap:20px"><span class="hint">Bez PVN <b class="num" id="t-net">${money(t.net)}</b></span>${vp ? `<span class="hint">PVN <b class="num" id="t-vat">${money(t.vat)}</b></span>` : ""}<span>Kopā <b class="num" id="t-total" style="font-size:16px">${money(t.total)} €</b></span></div>
@@ -638,6 +640,7 @@ document.addEventListener("click", async e => {
   else if (act === "back") { S.editing = null; S.confirmDel = false; render(); }
   else if (act === "add-item") { inv.items.push({ desc: "", qty: 1, unit: "gab.", price: 0, vat: S.settings.defaultVat }); render(); $(`#it-desc-${inv.items.length - 1}`)?.focus(); }
   else if (act === "rm-item") { inv.items.splice(Number(b.dataset.k), 1); render(); }
+  else if (act === "today") { const old = inv.date; inv.date = today(); if (inv.due === addDays(old, S.settings.termDays)) inv.due = addDays(inv.date, S.settings.termDays); if (inv.autoNumber) inv.number = nextNumber(inv.date, inv.id); render(); }
   else if (act === "save") await saveInvoice();
   else if (act === "pdf") { b.disabled = true; b.textContent = "Veido PDF…"; await downloadPDF(inv); b.disabled = false; b.textContent = "Lejupielādēt PDF"; }
   else if (act === "dup") { const d = JSON.parse(JSON.stringify(inv)); Object.assign(d, { id: uid(), _new: true, status: "draft", date: today(), due: addDays(today(), S.settings.termDays), example: false, autoNumber: true }); d.number = nextNumber(d.date); delete d.seller; delete d.buyer; S.editing = d; render(); toast("Izveidota kopija. Saglabā, lai to paturētu."); }
