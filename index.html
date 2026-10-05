@@ -163,6 +163,7 @@ table.list .r { text-align: right }
       <button id="tab-settings" data-tab="settings">Mani rekvizīti</button>
     </nav>
     <span class="store-note" id="store-note">Ielādē datus…</span>
+    <button class="btn" id="drive-btn" hidden></button>
   </div>
 </header>
 
@@ -229,13 +230,14 @@ const store = {
     try { const raw = localStorage.getItem(LS_KEY); if (raw) return JSON.parse(raw); } catch (e) {}
     return { settings: null, clients: [], invoices: [] };
   },
-  saveLocal() { try { localStorage.setItem(LS_KEY, JSON.stringify({ settings: S.settings, clients: S.clients, invoices: S.invoices })); } catch (e) {} },
+  saveLocal() { driveSchedule(); try { localStorage.setItem(LS_KEY, JSON.stringify({ settings: S.settings, clients: S.clients, invoices: S.invoices })); } catch (e) {} },
   async put(coll, obj) {
+    obj.updatedAt = Date.now();
     if (this.mode === "db") { const { id, ...rest } = obj; await this.db.collection(coll).doc(id).set(JSON.parse(JSON.stringify(rest))); }
     else this.saveLocal();
   },
   async del(coll, id) { if (this.mode === "db") await this.db.collection(coll).doc(id).delete(); else this.saveLocal(); },
-  async putSettings(s) { if (this.mode === "db") await this.db.doc("config/settings").set(JSON.parse(JSON.stringify(s))); else this.saveLocal(); }
+  async putSettings(s) { s.updatedAt = Date.now(); if (this.mode === "db") await this.db.doc("config/settings").set(JSON.parse(JSON.stringify(s))); else this.saveLocal(); }
 };
 
 async function saveFile(filename, blob) {
@@ -337,7 +339,9 @@ async function downloadPDF(inv) {
     if (document.fonts && document.fonts.ready) await document.fonts.ready;
     const blob = await html2pdf().set({ margin: 0, image: { type: "jpeg", quality: .96 }, html2canvas: { scale: 2, backgroundColor: "#ffffff" }, jsPDF: { unit: "px", format: [794, 1123], hotfixes: ["px_scaling"] } })
       .from($(".sheet", stage)).outputPdf("blob");
-    await saveFile(`Rekins_${inv.number.replace(/[^\w.-]+/g, "_")}.pdf`, blob);
+    const pdfName = `Rekins_${inv.number.replace(/[^\w.-]+/g, "_")}.pdf`;
+    if (DRIVE.tok) { try { await driveUploadPdf(pdfName, blob); toast("PDF saglabāts Google Drive"); } catch (e) { console.warn(e); toast("PDF neizdevās saglabāt Drive: " + e.message); } }
+    await saveFile(pdfName, blob);
   } catch (e) { console.error(e); toast("PDF neizdevās izveidot."); }
   finally { stage.innerHTML = ""; }
 }
@@ -351,6 +355,7 @@ function render() {
   else if (S.tab === "clients") app.innerHTML = clientsView();
   else app.innerHTML = settingsView();
   if (S.editing) fitSheet();
+  driveUI();
 }
 function setupBanner() {
   return S.settings.name ? "" : `<div class="banner"><span>Vispirms ievadi sava uzņēmuma rekvizītus. Tie parādīsies katrā rēķinā.</span><button class="btn" data-act="goto" data-tab="settings">Aizpildīt rekvizītus</button></div>`;
@@ -475,6 +480,7 @@ function settingsView() {
       <label class="f check"><input type="checkbox" id="s-vatPayer"${s.vatPayer ? " checked" : ""}> Esmu PVN maksātājs</label>
       <label class="f span2">Teksts rēķina apakšā<input type="text" id="s-footer" value="${esc(s.footer)}"></label>
     </div>
+    <div id="drive-box"></div>
     <p class="hint">Numurs veidojas kā <span class="num">${esc(nextNumber(today()))}</span>: prefikss, gads un nākamais kārtas numurs šajā gadā.</p>
     <div class="row"><button class="btn primary" type="submit">Saglabāt rekvizītus</button><span class="spacer"></span><button class="btn" type="button" data-act="export">Lejupielādēt datu kopiju (JSON)</button></div>
   </form></section>`;
@@ -533,6 +539,7 @@ document.addEventListener("submit", async e => {
   if (e.target.id === "settings-form") {
     const s = { ...S.settings };
     for (const k of ["name", "regNo", "vatNo", "address", "email", "phone", "bank", "swift", "iban", "prefix", "footer"]) s[k] = $("#s-" + k).value.trim();
+    if ($("#s-gclient")) { try { localStorage.setItem("rr-gclient", $("#s-gclient").value.trim()); } catch (e) {} }
     s.termDays = Number($("#s-termDays").value) || 0; s.defaultVat = Number($("#s-defaultVat").value); s.vatPayer = $("#s-vatPayer").checked; delete s.example;
     S.settings = s; if (await guarded(() => store.putSettings(s))) toast("Rekvizīti saglabāti"); render();
   }
@@ -626,6 +633,106 @@ document.addEventListener("click", e => {
   $("#c-email").focus();
 });
 
+
+/* ---------- Google Drive (tikai ārpus claude.ai; dati: mape "Rēķinu rīks" ar rekinu-riks-dati.json un PDF failiem) ---------- */
+const DRIVE = { tok: null, folderId: null, fileId: null, timer: null, state: "off", err: "" };
+const DRIVE_FOLDER = "Rēķinu rīks", DRIVE_FILE = "rekinu-riks-dati.json";
+const gcid = () => { try { return localStorage.getItem("rr-gclient") || ""; } catch (e) { return ""; } };
+const driveOn = () => store.mode === "local" && !!gcid();
+function loadGIS() {
+  return new Promise((res, rej) => {
+    if (window.google && google.accounts && google.accounts.oauth2) return res();
+    const sc = document.createElement("script"); sc.src = "https://accounts.google.com/gsi/client"; sc.onload = res; sc.onerror = () => rej(new Error("Google skripts neielādējās"));
+    document.head.appendChild(sc);
+  });
+}
+async function dapi(url, opt = {}) {
+  const r = await fetch(url, { ...opt, headers: { Authorization: "Bearer " + DRIVE.tok, ...(opt.headers || {}) } });
+  if (r.status === 401) { DRIVE.tok = null; DRIVE.state = "expired"; driveUI(); throw new Error("Google pieslēgums beidzies"); }
+  if (!r.ok) throw new Error("Drive kļūda " + r.status);
+  return r;
+}
+const dq = q => "https://www.googleapis.com/drive/v3/files?fields=files(id,name)&q=" + encodeURIComponent(q);
+async function driveEnsure() {
+  if (!DRIVE.folderId) {
+    const f = (await (await dapi(dq(`name='${DRIVE_FOLDER}' and mimeType='application/vnd.google-apps.folder' and trashed=false`))).json()).files;
+    DRIVE.folderId = f[0] ? f[0].id : (await (await dapi("https://www.googleapis.com/drive/v3/files", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: DRIVE_FOLDER, mimeType: "application/vnd.google-apps.folder" }) })).json()).id;
+  }
+  if (!DRIVE.fileId) {
+    const f = (await (await dapi(dq(`name='${DRIVE_FILE}' and '${DRIVE.folderId}' in parents and trashed=false`))).json()).files;
+    DRIVE.fileId = f[0] ? f[0].id : null;
+  }
+}
+function multipart(meta, blob, type) {
+  const b = "rr" + uid();
+  return { type: "multipart/related; boundary=" + b, body: new Blob([`--${b}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(meta)}\r\n--${b}\r\nContent-Type: ${type}\r\n\r\n`, blob, `\r\n--${b}--`]) };
+}
+async function drivePush() {
+  await driveEnsure();
+  const data = JSON.stringify({ settings: S.settings, clients: S.clients, invoices: S.invoices });
+  if (DRIVE.fileId) await dapi(`https://www.googleapis.com/upload/drive/v3/files/${DRIVE.fileId}?uploadType=media`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: data });
+  else { const m = multipart({ name: DRIVE_FILE, parents: [DRIVE.folderId] }, new Blob([data]), "application/json"); DRIVE.fileId = (await (await dapi("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id", { method: "POST", headers: { "Content-Type": m.type }, body: m.body })).json()).id; }
+}
+async function driveUploadPdf(name, blob) {
+  await driveEnsure();
+  const found = (await (await dapi(dq(`name='${name}' and '${DRIVE.folderId}' in parents and trashed=false`))).json()).files;
+  if (found[0]) { await dapi(`https://www.googleapis.com/upload/drive/v3/files/${found[0].id}?uploadType=media`, { method: "PATCH", headers: { "Content-Type": "application/pdf" }, body: blob }); return; }
+  const m = multipart({ name, parents: [DRIVE.folderId] }, blob, "application/pdf");
+  await dapi("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart", { method: "POST", headers: { "Content-Type": m.type }, body: m.body });
+}
+function mergeRemote(r) {
+  const take = (a, b) => ((b.updatedAt || 0) > (a.updatedAt || 0) ? b : a);
+  for (const k of ["clients", "invoices"]) {
+    const m = new Map(S[k].map(x => [x.id, x]));
+    for (const x of r[k] || []) m.set(x.id, m.has(x.id) ? take(m.get(x.id), x) : x);
+    S[k] = [...m.values()];
+  }
+  if (r.settings && (r.settings.updatedAt || 0) > (S.settings.updatedAt || 0)) S.settings = { ...DEFAULT_SETTINGS, ...r.settings };
+}
+async function driveConnect() {
+  if (!gcid()) { S.tab = "settings"; S.editing = null; render(); toast("Vispirms ievadi Google Client ID"); return; }
+  DRIVE.state = "busy"; DRIVE.err = ""; driveUI();
+  try {
+    await loadGIS();
+    DRIVE.tok = await new Promise((res, rej) => google.accounts.oauth2.initTokenClient({
+      client_id: gcid(), scope: "https://www.googleapis.com/auth/drive.file",
+      callback: r => r.error ? rej(new Error(r.error_description || r.error)) : res(r.access_token),
+      error_callback: e => rej(new Error(e.type === "popup_closed" ? "Pieslēgšanās atcelta" : (e.message || e.type || "kļūda")))
+    }).requestAccessToken());
+    await driveEnsure();
+    if (DRIVE.fileId) mergeRemote(await (await dapi(`https://www.googleapis.com/drive/v3/files/${DRIVE.fileId}?alt=media`)).json());
+    store.saveLocal.call(store); clearTimeout(DRIVE.timer);
+    await drivePush();
+    DRIVE.state = "on"; try { localStorage.setItem("rr-drive", "1"); } catch (e) {}
+    toast("Pieslēgts Google Drive"); render();
+  } catch (e) { console.warn(e); DRIVE.tok = null; DRIVE.state = "off"; DRIVE.err = e.message; toast("Google Drive: " + e.message); }
+  driveUI();
+}
+function driveSchedule() {
+  if (!DRIVE.tok || !driveOn()) return;
+  clearTimeout(DRIVE.timer); DRIVE.state = "busy"; driveUI();
+  DRIVE.timer = setTimeout(async () => {
+    try { await drivePush(); DRIVE.state = "on"; } catch (e) { console.warn(e); if (DRIVE.state !== "expired") { DRIVE.state = "error"; DRIVE.err = e.message; } }
+    driveUI();
+  }, 1500);
+}
+function driveUI() {
+  const b = $("#drive-btn"); if (!b) return;
+  const on = driveOn();
+  b.hidden = !on;
+  if (on) {
+    const t = { off: "Pieslēgt Google Drive", busy: "Saglabā Drive…", on: "Drive ✓ saglabāts", expired: "Pieslēgt Drive atkārtoti", error: "Drive kļūda, mēģināt vēlreiz" }[DRIVE.state];
+    b.textContent = t; b.disabled = DRIVE.state === "busy" || DRIVE.state === "on";
+    b.title = DRIVE.err || "";
+  }
+  const nb = $("#store-note"); if (nb && store.mode === "local") nb.textContent = DRIVE.state === "on" ? "Dati: šajā pārlūkā un Google Drive" : "Dati saglabājas šajā pārlūkā";
+  const box = $("#drive-box");
+  if (box && store.mode === "local") box.innerHTML = `<div><span class="eyebrow">Google Drive</span></div>
+    <label class="f">Google Client ID<input type="text" id="s-gclient" value="${esc(gcid())}" placeholder="123456789-abc.apps.googleusercontent.com"></label>
+    <p class="hint">Saglabā rēķinu datus un PDF failus tavā Google Drive mapē “${DRIVE_FOLDER}”. Pēc ID saglabāšanas augšā spied “Pieslēgt Google Drive”. Soļi: GOOGLE-DRIVE.md repozitorijā.</p>`;
+}
+$("#drive-btn").addEventListener("click", driveConnect);
+
 /* ---------- boot ---------- */
 (async () => {
   render();
@@ -635,6 +742,7 @@ document.addEventListener("click", e => {
   S.clients = data.clients || []; S.invoices = data.invoices || []; S.loaded = true;
   $("#store-note").textContent = store.mode === "db" ? "Dati saglabājas tavā kontā" : "Dati saglabājas šajā pārlūkā";
   render();
+  driveUI();
 })();
 </script>
 </body></html>

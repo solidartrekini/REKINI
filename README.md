@@ -9,6 +9,7 @@ Viss ir vienā failā `index.html`, bez būvēšanas soļa.
 - Atver `index.html` pārlūkā. Dati glabājas šī pārlūka `localStorage`.
 - claude.ai artifact versijā dati glabājas lietotāja kontā (artifact `db`), un PDF tiek saglabāts caur `downloads`.
 - Datu kopiju var lejupielādēt kā JSON cilnē **Mani rekvizīti**.
+- Google Drive saglabāšana: skat. [GOOGLE-DRIVE.md](GOOGLE-DRIVE.md).
 
 ## Atkarības
 
