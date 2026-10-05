@@ -13,5 +13,5 @@ Viss ir vienā failā `index.html`, bez būvēšanas soļa.
 
 ## Atkarības
 
-- [html2pdf.js 0.10.1](https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js) no cdnjs
-- IBM Plex Sans / Mono no Google Fonts
+- [pdf-lib 1.17.1](https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js) un [@pdf-lib/fontkit](https://cdn.jsdelivr.net/npm/@pdf-lib/fontkit@1.1.1/dist/fontkit.umd.min.js) no jsDelivr (PDF ar īstu tekstu)
+- IBM Plex Sans / Mono no Google Fonts; PDF izmanto IBM Plex Sans apakškopu (SIL OFL), iegultu kodā
