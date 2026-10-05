@@ -589,7 +589,7 @@ async function urSearch(q) {
     if (live) { UR.hits = live; out.innerHTML = live.length ? live.map((h, i) => `<button type="button" class="ur-hit" data-ur-live="${i}"><span>${esc(h[1])}</span><small class="num">${esc(h[0])} · ${esc(h[2])}</small></button>`).join("") : `<p class="hint">Nekas netika atrasts. Pārbaudi numuru vai nosaukumu.</p>`; return; }
   }
   if (UR.state !== "ready") { out.innerHTML = `<p class="hint">Ielādē reģistra datus…</p>`; await urLoad(); }
-  if (UR.state === "missing") { out.innerHTML = `<p class="hint">Reģistra dati vēl nav pievienoti. Rekvizītus ievadi paši.</p>`; return; }
+  if (UR.state === "missing") { out.innerHTML = `<p class="hint">Reģistra dati šeit nav pieejami${UR.err ? " (kļūda: " + esc(UR.err) + ")" : ""}. Rekvizītus ievadi paši.</p>`; return; }
   if ($("#ur-q")?.value.trim() !== q) return;
   const hits = []; const digits = /^\d+$/.test(q); const nq = norm(q).split(/\s+/).filter(Boolean);
   for (let i = 0; i < UR.rows.length && hits.length < 8; i++) {
@@ -602,11 +602,13 @@ async function urSearch(q) {
 const UR_API = "https://data.gov.lv/dati/api/3/action/datastore_search?resource_id=25e80bf3-f107-4ab4-89ef-251b5b9374e9&limit=30";
 async function urLive(q) {
   try {
-    const r = await fetch(UR_API + "&q=" + encodeURIComponent(q)); if (!r.ok) throw new Error(r.status);
+    const words = q.split(/\s+/).map(w => w.replace(/[^\p{L}\p{N}]/gu, "")).filter(Boolean);
+    const qs = /^\d+$/.test(q) ? "&q=" + encodeURIComponent(q) : "&plain=false&q=" + encodeURIComponent(words.map(w => w + ":*").join(" & "));
+    const r = await fetch(UR_API + qs); if (!r.ok) throw new Error(r.status);
     const j = await r.json(); UR.live = true;
     return j.result.records.filter(x => !x.terminated).slice(0, 8)
       .map(x => [String(x.regcode), x.name, [x.address, x.index ? "LV-" + String(x.index).padStart(4, "0") : ""].filter(Boolean).join(", ")]);
-  } catch (e) { console.warn("data.gov.lv nav pieejams", e); UR.live = false; return null; }
+  } catch (e) { console.warn("data.gov.lv nav pieejams", e); UR.live = false; UR.err = String((e && e.message) || e); return null; }
 }
 document.addEventListener("click", e => {
   const b = e.target.closest("[data-ur-live]"); if (!b) return;
