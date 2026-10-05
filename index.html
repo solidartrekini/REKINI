@@ -478,12 +478,25 @@ async function buildPdfBytes(inv) {
 }
 
 async function drivePdfQuiet(inv) {
-  if (!DRIVE.tok || !driveOn() || typeof PDFLib === "undefined" || typeof fontkit === "undefined") return;
+  if (!driveOn()) return;
+  if (!DRIVE.tok) { toast("Rēķins saglabāts, bet Drive nav pieslēgts. Spied “Pieslēgt Google Drive” augšā, tad Iestatījumos “Saglabāt visus PDF Drive”."); return; }
+  if (typeof PDFLib === "undefined" || typeof fontkit === "undefined") { toast("PDF bibliotēka nav ielādējusies, PDF nav saglabāts Drive."); return; }
   try {
     const blob = new Blob([await buildPdfBytes(inv)], { type: "application/pdf" });
     await driveUploadPdf(`Rekins_${inv.number.replace(/[^\w.-]+/g, "_")}.pdf`, blob, inv.date);
     toast("Rēķins " + inv.number + " saglabāts Google Drive");
   } catch (e) { console.warn(e); toast("PDF neizdevās saglabāt Drive: " + e.message); }
+}
+async function driveUploadAll() {
+  if (!DRIVE.tok) { toast("Vispirms pieslēdz Google Drive (poga augšā)"); return; }
+  const list = S.invoices.filter(i => i.status !== "draft" && !i.example);
+  if (!list.length) { toast("Nav izrakstītu rēķinu, ko saglabāt (melnraksti netiek augšupielādēti)"); return; }
+  let n = 0, bad = 0;
+  for (const inv of list) {
+    try { await driveUploadPdf(`Rekins_${inv.number.replace(/[^\w.-]+/g, "_")}.pdf`, new Blob([await buildPdfBytes(inv)], { type: "application/pdf" }), inv.date); n++; toast(`Drive: ${n}/${list.length}…`); }
+    catch (e) { console.warn(e); bad++; if (DRIVE.state === "expired") break; }
+  }
+  toast(bad ? `Saglabāti ${n}, neizdevās ${bad}. Pārbaudi Drive pieslēgumu.` : `Saglabāti Drive: ${n} rēķini`);
 }
 async function downloadPDF(inv) {
   if (typeof PDFLib === "undefined" || typeof fontkit === "undefined") { toast("PDF bibliotēka nav ielādējusies. Pārlādē lapu."); return; }
@@ -1049,7 +1062,8 @@ function driveUI() {
   if (box && store.mode === "local") box.innerHTML = `<div><span class="eyebrow">Google Drive</span></div>
     <label class="f">Google Client ID<input type="text" id="s-gclient" value="${esc(gcid())}" placeholder="123456789-abc.apps.googleusercontent.com"></label>
     <label class="f">Google konts (e-pasts)<input type="text" id="s-ghint" value="${esc(ghint())}" placeholder="${DEFAULT_GHINT}"></label>
-    <p class="hint">Saglabā rēķinu datus un PDF failus tavā Google Drive mapē “${DRIVE_FOLDER}”. Pēc ID saglabāšanas augšā spied “Pieslēgt Google Drive”. Soļi: GOOGLE-DRIVE.md repozitorijā.</p>`;
+    <p class="hint">Saglabā rēķinu datus un PDF failus tavā Google Drive mapē “${DRIVE_FOLDER}”. Pēc ID saglabāšanas augšā spied “Pieslēgt Google Drive”. Soļi: GOOGLE-DRIVE.md repozitorijā.</p>
+    <div><button class="btn" type="button" onclick="driveUploadAll()">Saglabāt visus izrakstītos rēķinus Drive kā PDF</button></div>`;
 }
 $("#drive-btn").addEventListener("click", driveConnect);
 
