@@ -637,7 +637,8 @@ document.addEventListener("click", e => {
 /* ---------- Google Drive (tikai ārpus claude.ai; dati: mape "Rēķinu rīks" ar rekinu-riks-dati.json un PDF failiem) ---------- */
 const DRIVE = { tok: null, folderId: null, fileId: null, timer: null, state: "off", err: "" };
 const DRIVE_FOLDER = "Rēķinu rīks", DRIVE_FILE = "rekinu-riks-dati.json";
-const gcid = () => { try { return localStorage.getItem("rr-gclient") || ""; } catch (e) { return ""; } };
+const DEFAULT_GCLIENT = "310657916605-1ikcu7lkiekvbtfb6se5f081d096lnjs.apps.googleusercontent.com"; /* OAuth Client ID nav noslēpums */
+const gcid = () => { try { return localStorage.getItem("rr-gclient") || DEFAULT_GCLIENT; } catch (e) { return DEFAULT_GCLIENT; } };
 const driveOn = () => store.mode === "local" && !!gcid();
 function loadGIS() {
   return new Promise((res, rej) => {
