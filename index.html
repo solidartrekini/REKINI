@@ -477,6 +477,14 @@ async function buildPdfBytes(inv) {
   return await doc.save();
 }
 
+async function drivePdfQuiet(inv) {
+  if (!DRIVE.tok || !driveOn() || typeof PDFLib === "undefined" || typeof fontkit === "undefined") return;
+  try {
+    const blob = new Blob([await buildPdfBytes(inv)], { type: "application/pdf" });
+    await driveUploadPdf(`Rekins_${inv.number.replace(/[^\w.-]+/g, "_")}.pdf`, blob, inv.date);
+    toast("Rēķins " + inv.number + " saglabāts Google Drive");
+  } catch (e) { console.warn(e); toast("PDF neizdevās saglabāt Drive: " + e.message); }
+}
 async function downloadPDF(inv) {
   if (typeof PDFLib === "undefined" || typeof fontkit === "undefined") { toast("PDF bibliotēka nav ielādējusies. Pārlādē lapu."); return; }
   try {
@@ -719,8 +727,10 @@ async function saveInvoice() {
   const cl = S.clients.find(c => c.id === out.clientId); if (cl && (out.status === "draft" || !inv.buyer || inv._new)) out.buyer = { name: cl.name, regNo: cl.regNo, vatNo: cl.vatNo, address: cl.address, email: cl.email };
   const k = S.invoices.findIndex(i => i.id === out.id); if (k >= 0) S.invoices[k] = out; else S.invoices.push(out);
   S.editing = JSON.parse(JSON.stringify(out));
-  if (await guarded(() => store.put("invoices", out))) toast("Rēķins " + out.number + " saglabāts");
+  const ok = await guarded(() => store.put("invoices", out));
+  if (ok) toast("Rēķins " + out.number + " saglabāts");
   render();
+  if (ok && out.status !== "draft") await drivePdfQuiet(out);
 }
 
 /* ---------- Uzņēmumu reģistra atvērtie dati (ur-dati.bin: gzip TSV regcode\tname\taddress) ---------- */
