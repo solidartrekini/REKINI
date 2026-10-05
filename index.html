@@ -443,7 +443,7 @@ function clientsView() {
       <h2>${c.id ? "Labot klientu" : "Jauns klients"}</h2>
       <div class="ur">
         <label class="f">Meklēt Uzņēmumu reģistrā<input type="text" id="ur-q" autocomplete="off" placeholder="Reģistrācijas nr. vai nosaukums"></label>
-        <div id="ur-out" class="ur-out"><p class="hint">${UR.state === "missing" ? "Reģistra dati vēl nav pievienoti. Rekvizītus ievadi paši." : "Ieraksti vismaz 3 simbolus, un izvēlies uzņēmumu, lai aizpildītu laukus."}</p></div>
+        <div id="ur-out" class="ur-out"><p class="hint">${UR.state === "missing" && UR.live === false ? "Reģistra dati šeit nav pieejami. Rekvizītus ievadi paši." : "Ieraksti vismaz 3 simbolus, un izvēlies uzņēmumu, lai aizpildītu laukus."}</p></div>
       </div>
       <div class="grid">
         <label class="f span2">Nosaukums<input type="text" id="c-name" value="${esc(c.name)}" required placeholder="SIA Piemērs"></label>
@@ -583,6 +583,11 @@ async function urSearch(q) {
   const out = $("#ur-out"); if (!out) return;
   q = q.trim();
   if (q.length < 3) { out.innerHTML = `<p class="hint">Ieraksti vismaz 3 simbolus.</p>`; return; }
+  if (UR.live !== false) {
+    const live = await urLive(q);
+    if ($("#ur-q")?.value.trim() !== q) return;
+    if (live) { UR.hits = live; out.innerHTML = live.length ? live.map((h, i) => `<button type="button" class="ur-hit" data-ur-live="${i}"><span>${esc(h[1])}</span><small class="num">${esc(h[0])} · ${esc(h[2])}</small></button>`).join("") : `<p class="hint">Nekas netika atrasts. Pārbaudi numuru vai nosaukumu.</p>`; return; }
+  }
   if (UR.state !== "ready") { out.innerHTML = `<p class="hint">Ielādē reģistra datus…</p>`; await urLoad(); }
   if (UR.state === "missing") { out.innerHTML = `<p class="hint">Reģistra dati vēl nav pievienoti. Rekvizītus ievadi paši.</p>`; return; }
   if ($("#ur-q")?.value.trim() !== q) return;
@@ -593,6 +598,23 @@ async function urSearch(q) {
   out.innerHTML = hits.length ? hits.map(i => { const [reg, name, addr] = UR.rows[i]; return `<button type="button" class="ur-hit" data-ur="${i}"><span>${esc(name)}</span><small class="num">${esc(reg)} · ${esc(addr || "")}</small></button>`; }).join("")
     : `<p class="hint">Nekas netika atrasts. Pārbaudi numuru vai nosaukumu.</p>`;
 }
+/* Tiešsaistes meklēšana data.gov.lv (strādā, ja lapa drīkst sazināties ar data.gov.lv; claude.ai lapā tas ir bloķēts) */
+const UR_API = "https://data.gov.lv/dati/api/3/action/datastore_search?resource_id=25e80bf3-f107-4ab4-89ef-251b5b9374e9&limit=30";
+async function urLive(q) {
+  try {
+    const r = await fetch(UR_API + "&q=" + encodeURIComponent(q)); if (!r.ok) throw new Error(r.status);
+    const j = await r.json(); UR.live = true;
+    return j.result.records.filter(x => !x.terminated).slice(0, 8)
+      .map(x => [String(x.regcode), x.name, [x.address, x.index ? "LV-" + String(x.index).padStart(4, "0") : ""].filter(Boolean).join(", ")]);
+  } catch (e) { console.warn("data.gov.lv nav pieejams", e); UR.live = false; return null; }
+}
+document.addEventListener("click", e => {
+  const b = e.target.closest("[data-ur-live]"); if (!b) return;
+  const [reg, name, addr] = UR.hits[Number(b.dataset.urLive)];
+  $("#c-name").value = name; $("#c-regNo").value = reg; $("#c-address").value = addr;
+  $("#ur-out").innerHTML = `<p class="hint">Aizpildīts no Uzņēmumu reģistra. Pārbaudi un saglabā.</p>`;
+  $("#c-email").focus();
+});
 document.addEventListener("input", e => { if (e.target.id === "ur-q") { clearTimeout(urSearch.t); const v = e.target.value; urSearch.t = setTimeout(() => urSearch(v), 200); } });
 document.addEventListener("click", e => {
   const b = e.target.closest("[data-ur]"); if (!b) return;
