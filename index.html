@@ -555,6 +555,7 @@ document.addEventListener("submit", async e => {
   if (e.target.id === "settings-form") {
     const s = { ...S.settings };
     for (const k of ["name", "regNo", "vatNo", "address", "email", "phone", "bank", "swift", "iban", "prefix", "footer"]) s[k] = $("#s-" + k).value.trim();
+    if ($("#s-ghint")) { try { localStorage.setItem("rr-ghint", $("#s-ghint").value.trim()); } catch (e) {} }
     if ($("#s-gclient")) { try { localStorage.setItem("rr-gclient", $("#s-gclient").value.trim()); } catch (e) {} }
     s.termDays = Number($("#s-termDays").value) || 0; s.defaultVat = Number($("#s-defaultVat").value); s.vatPayer = $("#s-vatPayer").checked; delete s.example;
     S.settings = s; if (await guarded(() => store.putSettings(s))) toast("Rekvizīti saglabāti"); render();
@@ -734,6 +735,8 @@ let idleT; const idleReset = () => { clearTimeout(idleT); if (LOCK.key) idleT = 
 const DRIVE = { tok: null, folderId: null, fileId: null, timer: null, state: "off", err: "" };
 const DRIVE_FOLDER = "Rēķinu rīks", DRIVE_FILE = "rekinu-riks-dati.json";
 const DEFAULT_GCLIENT = "310657916605-1ikcu7lkiekvbtfb6se5f081d096lnjs.apps.googleusercontent.com"; /* OAuth Client ID nav noslēpums */
+const DEFAULT_GHINT = "solidartrekini@gmail.com";
+const ghint = () => { try { return localStorage.getItem("rr-ghint") || DEFAULT_GHINT; } catch (e) { return DEFAULT_GHINT; } };
 const gcid = () => { try { return localStorage.getItem("rr-gclient") || DEFAULT_GCLIENT; } catch (e) { return DEFAULT_GCLIENT; } };
 const driveOn = () => store.mode === "local" && !!gcid();
 function loadGIS() {
@@ -792,7 +795,7 @@ async function driveConnect() {
   try {
     await loadGIS();
     DRIVE.tok = await new Promise((res, rej) => google.accounts.oauth2.initTokenClient({
-      client_id: gcid(), scope: "https://www.googleapis.com/auth/drive.file", prompt: "select_account",
+      client_id: gcid(), scope: "https://www.googleapis.com/auth/drive.file", prompt: "select_account", hint: ghint(),
       callback: r => r.error ? rej(new Error(r.error_description || r.error)) : res(r.access_token),
       error_callback: e => rej(new Error(e.type === "popup_closed" ? "Pieslēgšanās atcelta" : (e.message || e.type || "kļūda")))
     }).requestAccessToken());
@@ -826,6 +829,7 @@ function driveUI() {
   const box = $("#drive-box");
   if (box && store.mode === "local") box.innerHTML = `<div><span class="eyebrow">Google Drive</span></div>
     <label class="f">Google Client ID<input type="text" id="s-gclient" value="${esc(gcid())}" placeholder="123456789-abc.apps.googleusercontent.com"></label>
+    <label class="f">Google konts (e-pasts)<input type="text" id="s-ghint" value="${esc(ghint())}" placeholder="${DEFAULT_GHINT}"></label>
     <p class="hint">Saglabā rēķinu datus un PDF failus tavā Google Drive mapē “${DRIVE_FOLDER}”. Pēc ID saglabāšanas augšā spied “Pieslēgt Google Drive”. Soļi: GOOGLE-DRIVE.md repozitorijā.</p>`;
 }
 $("#drive-btn").addEventListener("click", driveConnect);
