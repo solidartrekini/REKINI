@@ -144,6 +144,11 @@ table.list .r { text-align: right }
 
 .clients { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; align-items: start }
 @media (max-width: 860px) { .clients { grid-template-columns: minmax(0, 1fr) } }
+.ur { display: grid; gap: 6px; background: var(--surface-2); border-radius: var(--r); padding: 12px }
+.ur-out { display: grid; gap: 2px }
+.ur-hit { text-align: left; border: 0; background: none; padding: 6px 8px; border-radius: var(--r); cursor: pointer; display: grid; gap: 1px }
+.ur-hit:hover, .ur-hit:focus-visible { background: var(--surface) }
+.ur-hit small { color: var(--muted) }
 .toast { position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 20px); transform: translateX(-50%); background: var(--ink); color: var(--bg); padding: 8px 16px; border-radius: var(--r); font-size: 13px; z-index: 20 }
 #pdf-stage { position: fixed; left: -10000px; top: 0 }
 @media (prefers-reduced-motion: no-preference) { .btn, nav button { transition: background .15s, border-color .15s } }
@@ -436,6 +441,10 @@ function clientsView() {
     </div>
     <form class="panel" id="client-form">
       <h2>${c.id ? "Labot klientu" : "Jauns klients"}</h2>
+      <div class="ur">
+        <label class="f">Meklēt Uzņēmumu reģistrā<input type="text" id="ur-q" autocomplete="off" placeholder="Reģistrācijas nr. vai nosaukums"></label>
+        <div id="ur-out" class="ur-out"><p class="hint">${UR.state === "missing" ? "Reģistra dati vēl nav pievienoti. Rekvizītus ievadi paši." : "Ieraksti vismaz 3 simbolus, un izvēlies uzņēmumu, lai aizpildītu laukus."}</p></div>
+      </div>
       <div class="grid">
         <label class="f span2">Nosaukums<input type="text" id="c-name" value="${esc(c.name)}" required placeholder="SIA Piemērs"></label>
         <label class="f">Reģistrācijas nr.<input type="text" id="c-regNo" value="${esc(c.regNo)}" placeholder="40000000000"></label>
@@ -551,6 +560,47 @@ async function saveInvoice() {
   if (await guarded(() => store.put("invoices", out))) toast("Rēķins " + out.number + " saglabāts");
   render();
 }
+
+/* ---------- Uzņēmumu reģistra atvērtie dati (ur-dati.bin: gzip TSV regcode\tname\taddress) ---------- */
+const UR = { state: "idle", rows: null, keys: null, p: null };
+const norm = s => s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/["'„“”«»]/g, "");
+function urLoad() {
+  if (UR.p) return UR.p;
+  UR.state = "loading";
+  UR.p = (async () => {
+    const r = await fetch("ur-dati.bin"); if (!r.ok) throw new Error(r.status);
+    const buf = new Uint8Array(await r.arrayBuffer());
+    let text;
+    if (buf[0] === 0x1f && buf[1] === 0x8b) text = await new Response(new Blob([buf]).stream().pipeThrough(new DecompressionStream("gzip"))).text();
+    else text = new TextDecoder().decode(buf);
+    UR.rows = text.split("\n").filter(Boolean).map(l => l.split("\t"));
+    UR.keys = UR.rows.map(r => norm(r[1]));
+    UR.state = "ready";
+  })().catch(e => { console.warn("UR dati nav pieejami", e); UR.state = "missing"; });
+  return UR.p;
+}
+async function urSearch(q) {
+  const out = $("#ur-out"); if (!out) return;
+  q = q.trim();
+  if (q.length < 3) { out.innerHTML = `<p class="hint">Ieraksti vismaz 3 simbolus.</p>`; return; }
+  if (UR.state !== "ready") { out.innerHTML = `<p class="hint">Ielādē reģistra datus…</p>`; await urLoad(); }
+  if (UR.state === "missing") { out.innerHTML = `<p class="hint">Reģistra dati vēl nav pievienoti. Rekvizītus ievadi paši.</p>`; return; }
+  if ($("#ur-q")?.value.trim() !== q) return;
+  const hits = []; const digits = /^\d+$/.test(q); const nq = norm(q).split(/\s+/).filter(Boolean);
+  for (let i = 0; i < UR.rows.length && hits.length < 8; i++) {
+    if (digits ? UR.rows[i][0].startsWith(q) : nq.every(w => UR.keys[i].includes(w))) hits.push(i);
+  }
+  out.innerHTML = hits.length ? hits.map(i => { const [reg, name, addr] = UR.rows[i]; return `<button type="button" class="ur-hit" data-ur="${i}"><span>${esc(name)}</span><small class="num">${esc(reg)} · ${esc(addr || "")}</small></button>`; }).join("")
+    : `<p class="hint">Nekas netika atrasts. Pārbaudi numuru vai nosaukumu.</p>`;
+}
+document.addEventListener("input", e => { if (e.target.id === "ur-q") { clearTimeout(urSearch.t); const v = e.target.value; urSearch.t = setTimeout(() => urSearch(v), 200); } });
+document.addEventListener("click", e => {
+  const b = e.target.closest("[data-ur]"); if (!b) return;
+  const [reg, name, addr] = UR.rows[Number(b.dataset.ur)];
+  $("#c-name").value = name; $("#c-regNo").value = reg; $("#c-address").value = addr || "";
+  $("#ur-out").innerHTML = `<p class="hint">Aizpildīts no Uzņēmumu reģistra. Pārbaudi un saglabā.</p>`;
+  $("#c-email").focus();
+});
 
 /* ---------- boot ---------- */
 (async () => {
