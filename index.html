@@ -559,7 +559,7 @@ function editorView() {
       ${inv._new ? "" : `<button class="btn" data-act="dup">Dublēt</button>`}
       ${inv._new ? "" : (S.confirmDel ? `<span class="confirm">Dzēst rēķinu? <button class="btn danger" data-act="del-yes">Dzēst</button><button class="btn" data-act="del-no">Atcelt</button></span>` : `<button class="btn danger" data-act="del">Dzēst</button>`)}
       <button class="btn" data-act="pdf">Lejupielādēt PDF</button>
-      <button class="btn primary" data-act="save">Saglabāt</button>
+      ${inv.status === "draft" ? `<button class="btn" data-act="save">Saglabāt melnrakstu</button><button class="btn primary" data-act="save-issue">Saglabāt kā izrakstītu</button>` : `<button class="btn primary" data-act="save">Saglabāt</button>`}
     </div>
     <div class="editor">
       <div style="display:grid;gap:16px;min-width:0">
@@ -674,6 +674,7 @@ document.addEventListener("click", async e => {
   else if (act === "rm-item") { inv.items.splice(Number(b.dataset.k), 1); render(); }
   else if (act === "today") { const old = inv.date; inv.date = today(); if (inv.due === addDays(old, S.settings.termDays)) inv.due = addDays(inv.date, S.settings.termDays); if (inv.autoNumber) inv.number = nextNumber(inv.date, inv.id); render(); }
   else if (act === "save") await saveInvoice();
+  else if (act === "save-issue") { inv.status = "issued"; await saveInvoice(); }
   else if (act === "pdf") { b.disabled = true; b.textContent = "Veido PDF…"; await downloadPDF(inv); b.disabled = false; b.textContent = "Lejupielādēt PDF"; }
   else if (act === "dup") { const d = JSON.parse(JSON.stringify(inv)); Object.assign(d, { id: uid(), _new: true, status: "draft", date: today(), due: addDays(today(), S.settings.termDays), example: false, autoNumber: true }); d.number = nextNumber(d.date); delete d.seller; delete d.buyer; S.editing = d; render(); toast("Izveidota kopija. Saglabā, lai to paturētu."); }
   else if (act === "del") { S.confirmDel = true; render(); }
