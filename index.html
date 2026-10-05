@@ -149,6 +149,9 @@ table.list .r { text-align: right }
 .ur-hit { text-align: left; border: 0; background: none; padding: 6px 8px; border-radius: var(--r); cursor: pointer; display: grid; gap: 1px }
 .ur-hit:hover, .ur-hit:focus-visible { background: var(--surface) }
 .ur-hit small { color: var(--muted) }
+#lock { position: fixed; inset: 0; z-index: 50; background: var(--bg); display: grid; place-items: center; padding: 16px }
+#lock .box { width: min(380px, 100%); background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 22px; display: grid; gap: 14px }
+.err { color: var(--bad); font-size: 13px; margin: 0 }
 .toast { position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 20px); transform: translateX(-50%); background: var(--ink); color: var(--bg); padding: 8px 16px; border-radius: var(--r); font-size: 13px; z-index: 20 }
 #pdf-stage { position: fixed; left: -10000px; top: 0 }
 @media (prefers-reduced-motion: no-preference) { .btn, nav button { transition: background .15s, border-color .15s } }
@@ -164,6 +167,7 @@ table.list .r { text-align: right }
     </nav>
     <span class="store-note" id="store-note">Ielādē datus…</span>
     <button class="btn" id="drive-btn" hidden></button>
+    <button class="btn" id="lock-btn" hidden>Aizslēgt</button>
   </div>
 </header>
 
@@ -227,10 +231,21 @@ const store = {
         return { settings: s.exists ? s.data() : null, clients: c.docs.map(d => ({ ...d.data(), id: d.id })), invoices: i.docs.map(d => ({ ...d.data(), id: d.id })) };
       } catch (e) { console.warn("db load failed, using browser storage", e); this.mode = "local"; }
     }
-    try { const raw = localStorage.getItem(LS_KEY); if (raw) return JSON.parse(raw); } catch (e) {}
+    try {
+      const raw = localStorage.getItem(LS_KEY);
+      if (raw) { const o = JSON.parse(raw); if (!o.enc) return o; if (LOCK.key) return JSON.parse(await decStr(LOCK.key, o)); }
+    } catch (e) { console.warn(e); }
     return { settings: null, clients: [], invoices: [] };
   },
-  saveLocal() { driveSchedule(); try { localStorage.setItem(LS_KEY, JSON.stringify({ settings: S.settings, clients: S.clients, invoices: S.invoices })); } catch (e) {} },
+  saveLocal() {
+    driveSchedule();
+    const data = JSON.stringify({ settings: S.settings, clients: S.clients, invoices: S.invoices });
+    if (LOCK.key) {
+      LOCK.q = (LOCK.q || Promise.resolve()).then(async () => { const e = await encStr(LOCK.key, data); localStorage.setItem(LS_KEY, JSON.stringify({ enc: 1, ...e })); }).catch(e => console.warn(e));
+      return;
+    }
+    try { localStorage.setItem(LS_KEY, data); } catch (e) {}
+  },
   async put(coll, obj) {
     obj.updatedAt = Date.now();
     if (this.mode === "db") { const { id, ...rest } = obj; await this.db.collection(coll).doc(id).set(JSON.parse(JSON.stringify(rest))); }
@@ -355,7 +370,7 @@ function render() {
   else if (S.tab === "clients") app.innerHTML = clientsView();
   else app.innerHTML = settingsView();
   if (S.editing) fitSheet();
-  driveUI();
+  driveUI(); lockUI();
 }
 function setupBanner() {
   return S.settings.name ? "" : `<div class="banner"><span>Vispirms ievadi sava uzņēmuma rekvizītus. Tie parādīsies katrā rēķinā.</span><button class="btn" data-act="goto" data-tab="settings">Aizpildīt rekvizītus</button></div>`;
@@ -481,6 +496,7 @@ function settingsView() {
       <label class="f span2">Teksts rēķina apakšā<input type="text" id="s-footer" value="${esc(s.footer)}"></label>
     </div>
     <div id="drive-box"></div>
+    <div id="lock-box"></div>
     <p class="hint">Numurs veidojas kā <span class="num">${esc(nextNumber(today()))}</span>: prefikss, gads un nākamais kārtas numurs šajā gadā.</p>
     <div class="row"><button class="btn primary" type="submit">Saglabāt rekvizītus</button><span class="spacer"></span><button class="btn" type="button" data-act="export">Lejupielādēt datu kopiju (JSON)</button></div>
   </form></section>`;
@@ -634,6 +650,86 @@ document.addEventListener("click", e => {
 });
 
 
+
+/* ---------- paroles aizsardzība (AES-GCM, atslēga no paroles ar PBKDF2); darbojas tikai ārpus claude.ai ---------- */
+const LOCK_KEY = "rekinu-riks-lock";
+const LOCK = { key: null, q: null };
+const lsGet = k => { try { return localStorage.getItem(k); } catch (e) { return null; } };
+const b64 = buf => { const a = new Uint8Array(buf); let s = ""; for (let i = 0; i < a.length; i += 8192) s += String.fromCharCode(...a.subarray(i, i + 8192)); return btoa(s); };
+const unb64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+async function deriveKey(pw, salt, iter) {
+  const base = await crypto.subtle.importKey("raw", new TextEncoder().encode(pw), "PBKDF2", false, ["deriveKey"]);
+  return crypto.subtle.deriveKey({ name: "PBKDF2", salt, iterations: iter, hash: "SHA-256" }, base, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
+}
+async function encStr(key, str) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  return { iv: b64(iv), ct: b64(await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, new TextEncoder().encode(str))) };
+}
+async function decStr(key, o) { return new TextDecoder().decode(await crypto.subtle.decrypt({ name: "AES-GCM", iv: unb64(o.iv) }, key, unb64(o.ct))); }
+const lockMeta = () => { try { return JSON.parse(lsGet(LOCK_KEY)); } catch (e) { return null; } };
+
+function unlockFlow() {
+  return new Promise(resolve => {
+    const meta = lockMeta();
+    const el = document.createElement("div"); el.id = "lock";
+    el.innerHTML = `<form class="box" id="lock-form">
+      <div class="brand"><h1>Rēķinu rīks</h1><span class="stamp">EUR</span></div>
+      <label class="f">Parole<input type="password" id="lock-pw" autocomplete="current-password" required></label>
+      <p class="err" id="lock-err" hidden></p>
+      <button class="btn primary" type="submit">Atslēgt</button>
+      <div id="lock-forgot"><button class="btn ghost" type="button" id="lock-forgot-btn" style="padding:0;color:var(--muted)">Aizmirsu paroli</button></div>
+    </form>`;
+    document.body.appendChild(el);
+    $("#lock-pw").focus();
+    $("#lock-form").addEventListener("submit", async e => {
+      e.preventDefault(); const err = $("#lock-err"); err.hidden = true;
+      try {
+        const key = await deriveKey($("#lock-pw").value, unb64(meta.salt), meta.iter);
+        if ((await decStr(key, meta.check)) !== "ok") throw new Error();
+        LOCK.key = key; el.remove(); resolve();
+      } catch (x) { err.textContent = "Nepareiza parole."; err.hidden = false; $("#lock-pw").select(); }
+    });
+    $("#lock-forgot").addEventListener("click", e => {
+      if (e.target.id === "lock-forgot-btn") {
+        $("#lock-forgot").innerHTML = `<p class="hint">Šajā pārlūkā saglabātie dati tiks izdzēsti, un paroles aizsardzība tiks noņemta. Ja esi pieslēdzis Google Drive, dati no tā atgriezīsies pēc pieslēgšanās.</p><button class="btn danger" type="button" id="lock-wipe">Dzēst datus šajā pārlūkā</button>`;
+      } else if (e.target.id === "lock-wipe") {
+        try { localStorage.removeItem(LS_KEY); localStorage.removeItem(LOCK_KEY); } catch (x) {}
+        location.reload();
+      }
+    });
+  });
+}
+async function enableLock(pw) {
+  const salt = crypto.getRandomValues(new Uint8Array(16)), iter = 250000;
+  const key = await deriveKey(pw, salt, iter);
+  try { localStorage.setItem(LOCK_KEY, JSON.stringify({ salt: b64(salt), iter, check: await encStr(key, "ok") })); } catch (e) { throw new Error("Pārlūks neļauj saglabāt"); }
+  LOCK.key = key; store.saveLocal();
+}
+function disableLock() { LOCK.key = null; try { localStorage.removeItem(LOCK_KEY); } catch (e) {} LOCK.q = null; store.saveLocal(); }
+function lockUI() {
+  const lb = $("#lock-btn"); if (lb) lb.hidden = !(store.mode === "local" && LOCK.key);
+  const box = $("#lock-box"); if (!box || store.mode !== "local") return;
+  const on = !!LOCK.key;
+  box.innerHTML = `<div><span class="eyebrow">Paroles aizsardzība</span></div>
+    ${on ? `<p class="hint">Dati šajā pārlūkā ir šifrēti ar paroli. Rīks aizslēdzas pats pēc 15 minūtēm bez darbības.</p>` : `<p class="hint">Aizslēdz rīku ar paroli un šifrē datus šajā pārlūkā. Ja paroli aizmirsīsi, pārlūkā saglabātos datus neatgūsi (Drive kopija paliek).</p>`}
+    <div class="grid"><label class="f">${on ? "Jaunā parole" : "Parole"}<input type="password" id="lk-1" autocomplete="new-password"></label>
+    <label class="f">Atkārtot paroli<input type="password" id="lk-2" autocomplete="new-password"></label></div>
+    <p class="err" id="lk-err" hidden></p>
+    <div class="row"><button class="btn primary" type="button" id="lk-set">${on ? "Mainīt paroli" : "Ieslēgt paroles aizsardzību"}</button>${on ? `<button class="btn" type="button" id="lk-off">Noņemt paroli</button>` : ""}</div>`;
+}
+document.addEventListener("click", async e => {
+  const id = e.target.id;
+  if (id === "lock-btn") { location.reload(); }
+  else if (id === "lk-set") {
+    const a = $("#lk-1").value, b = $("#lk-2").value, err = $("#lk-err"); err.hidden = true;
+    if (a.length < 6) { err.textContent = "Parolei jābūt vismaz 6 simbolus garai."; err.hidden = false; return; }
+    if (a !== b) { err.textContent = "Paroles nesakrīt."; err.hidden = false; return; }
+    try { await enableLock(a); toast("Paroles aizsardzība ieslēgta"); render(); } catch (x) { err.textContent = x.message; err.hidden = false; }
+  } else if (id === "lk-off") { disableLock(); toast("Parole noņemta"); render(); }
+});
+let idleT; const idleReset = () => { clearTimeout(idleT); if (LOCK.key) idleT = setTimeout(() => { if (!S.editing) location.reload(); else idleReset(); }, 15 * 60 * 1000); };
+["click", "keydown", "pointerdown"].forEach(ev => document.addEventListener(ev, idleReset, { passive: true }));
+
 /* ---------- Google Drive (tikai ārpus claude.ai; dati: mape "Rēķinu rīks" ar rekinu-riks-dati.json un PDF failiem) ---------- */
 const DRIVE = { tok: null, folderId: null, fileId: null, timer: null, state: "off", err: "" };
 const DRIVE_FOLDER = "Rēķinu rīks", DRIVE_FILE = "rekinu-riks-dati.json";
@@ -738,12 +834,13 @@ $("#drive-btn").addEventListener("click", driveConnect);
 (async () => {
   render();
   await store.init();
+  if (store.mode === "local" && lockMeta()) await unlockFlow();
   const data = await store.load();
   S.settings = { ...DEFAULT_SETTINGS, ...(data.settings || {}) };
   S.clients = data.clients || []; S.invoices = data.invoices || []; S.loaded = true;
   $("#store-note").textContent = store.mode === "db" ? "Dati saglabājas tavā kontā" : "Dati saglabājas šajā pārlūkā";
   render();
-  driveUI();
+  driveUI(); lockUI(); idleReset();
 })();
 </script>
 </body></html>
