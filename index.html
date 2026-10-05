@@ -1,0 +1,566 @@
+<!doctype html><html lang="lv"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"></head><body><title>Rēķinu rīks</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+<style>
+/* Layout: app bar with three tabs; invoice view = form column + live A4 sheet, stacking on phones */
+:root {
+  --bg: #eef0ef;
+  --surface: #ffffff;
+  --surface-2: #f6f7f6;
+  --line: #d6dbd9;
+  --ink: #18201e;
+  --muted: #5d6965;
+  --accent: #9e2a35;       /* Latvian carmine, used sparingly */
+  --accent-ink: #ffffff;
+  --accent-soft: #f6e6e8;
+  --ok: #1f6d4c; --ok-soft: #e1f1e9;
+  --warn: #8a5a00; --warn-soft: #fbf0d8;
+  --bad: #a3242f; --bad-soft: #f9e2e4;
+  --paper: #ffffff; --paper-ink: #1a1a1a; --paper-muted: #666b69; --paper-line: #d9d9d9;
+  --f-body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+  --r: 6px;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #141917; --surface: #1c2220; --surface-2: #222a27; --line: #34403c; --ink: #e8edeb; --muted: #9aa7a2;
+  --accent: #e0707a; --accent-ink: #1a0f10; --accent-soft: #3a2125;
+  --ok: #6fcf9f; --ok-soft: #173327; --warn: #e6b450; --warn-soft: #3a2f15; --bad: #f08a92; --bad-soft: #3d1e22;
+  color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #141917; --surface: #1c2220; --surface-2: #222a27; --line: #34403c; --ink: #e8edeb; --muted: #9aa7a2;
+  --accent: #e0707a; --accent-ink: #1a0f10; --accent-soft: #3a2125;
+  --ok: #6fcf9f; --ok-soft: #173327; --warn: #e6b450; --warn-soft: #3a2f15; --bad: #f08a92; --bad-soft: #3d1e22;
+  color-scheme: dark }
+
+* { box-sizing: border-box }
+body { background: var(--bg); color: var(--ink); font: 14px/1.5 var(--f-body); }
+.wrap { max-width: 1320px; margin: 0 auto; padding-inline: 16px; padding-block: 0 48px }
+h1, h2, h3 { text-wrap: balance; margin: 0 }
+.num { font-family: var(--f-mono); font-variant-numeric: tabular-nums }
+
+/* app bar */
+.bar { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; background: var(--bg); border-bottom: 1px solid var(--line) }
+.bar .wrap { display: flex; align-items: center; gap: 24px; flex-wrap: wrap; padding-block: 12px }
+.brand { display: flex; align-items: baseline; gap: 10px }
+.brand h1 { font-size: 18px; font-weight: 700; letter-spacing: -.01em }
+.brand .stamp { font: 500 11px var(--f-mono); color: var(--accent); border: 1.5px solid var(--accent); padding: 0 6px; border-radius: 3px; transform: rotate(-3deg); letter-spacing: .08em }
+nav { display: flex; gap: 4px; flex-wrap: wrap }
+nav button { background: none; border: 0; padding: 6px 12px; border-radius: var(--r); color: var(--muted); font: 500 14px var(--f-body); cursor: pointer }
+nav button[aria-current="true"] { background: var(--surface); color: var(--ink); box-shadow: inset 0 0 0 1px var(--line) }
+.store-note { margin-left: auto; font-size: 12px; color: var(--muted) }
+
+/* controls */
+button, input, select, textarea { font: inherit; color: inherit }
+.btn { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); background: var(--surface); padding: 7px 14px; border-radius: var(--r); cursor: pointer; font-weight: 500; white-space: nowrap }
+.btn:hover { border-color: var(--muted) }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink) }
+.btn.danger { color: var(--bad) }
+.btn.ghost { border-color: transparent; background: none }
+.btn:disabled { opacity: .5; cursor: default }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px }
+label.f { display: grid; gap: 4px; font-size: 12px; color: var(--muted); min-width: 0 }
+label.f.check { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--ink) }
+input[type=text], input[type=date], input[type=number], input[type=email], select, textarea {
+  width: 100%; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 7px 9px; font-size: 14px; color: var(--ink) }
+textarea { resize: vertical; min-height: 60px }
+.grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)) }
+.grid .span2 { grid-column: span 2 }
+@media (max-width: 520px) { .grid .span2 { grid-column: auto } }
+
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 18px; display: grid; gap: 16px; min-width: 0 }
+.panel h2 { font-size: 15px; font-weight: 600 }
+.eyebrow { font: 500 11px var(--f-mono); letter-spacing: .1em; text-transform: uppercase; color: var(--muted) }
+.row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center }
+.spacer { flex: 1 }
+.hint { color: var(--muted); font-size: 13px; margin: 0 }
+.banner { background: var(--warn-soft); color: var(--ink); border-radius: var(--r); padding: 10px 14px; font-size: 13px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap }
+
+section.view { padding-top: 20px; display: grid; gap: 16px }
+
+/* invoice list */
+.summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px }
+.summary div { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; display: grid; gap: 2px }
+.summary b { font: 500 20px var(--f-mono); font-variant-numeric: tabular-nums }
+.tablewrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 8px }
+table.list { width: 100%; border-collapse: collapse; min-width: 640px }
+table.list th { text-align: left; font: 500 11px var(--f-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); padding: 10px 14px; border-bottom: 1px solid var(--line) }
+table.list td { padding: 10px 14px; border-bottom: 1px solid var(--line) }
+table.list tr:last-child td { border-bottom: 0 }
+table.list tbody tr { cursor: pointer }
+table.list tbody tr:hover { background: var(--surface-2) }
+table.list .r { text-align: right }
+.pill { display: inline-block; font-size: 12px; font-weight: 500; padding: 1px 9px; border-radius: 99px; white-space: nowrap }
+.pill.draft { background: var(--surface-2); color: var(--muted); box-shadow: inset 0 0 0 1px var(--line) }
+.pill.issued { background: var(--warn-soft); color: var(--warn) }
+.pill.paid { background: var(--ok-soft); color: var(--ok) }
+.pill.overdue { background: var(--bad-soft); color: var(--bad) }
+.empty { padding: 32px 18px; text-align: center; color: var(--muted) }
+.filters { display: flex; gap: 8px; flex-wrap: wrap }
+.filters select, .filters input { width: auto }
+
+/* editor */
+.editor { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; align-items: start }
+@media (max-width: 1000px) { .editor { grid-template-columns: minmax(0, 1fr) } }
+.items { display: grid; gap: 8px }
+.item { display: grid; grid-template-columns: minmax(0, 1fr) 70px 64px 96px 72px 32px; gap: 6px; align-items: end }
+.item .desc { grid-column: 1 }
+@media (max-width: 560px) { .item { grid-template-columns: 1fr 1fr 1fr 32px } .item .desc { grid-column: 1 / -1 } .item .price { grid-column: span 1 } }
+.item label.f span { white-space: nowrap }
+.del { border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 18px; height: 36px }
+.del:hover { color: var(--bad) }
+.confirm { display: inline-flex; gap: 6px; align-items: center; font-size: 13px }
+
+.sheet-holder { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 72px); display: grid; gap: 8px; min-width: 0 }
+.sheet-frame { overflow: hidden; border-radius: 4px; box-shadow: 0 1px 2px rgb(0 0 0 / .08), 0 8px 24px rgb(0 0 0 / .08); background: var(--paper) }
+
+/* the A4 sheet: fixed paper colors in both themes */
+.sheet { width: 794px; min-height: 1123px; padding: 56px 60px; background: var(--paper); color: var(--paper-ink); font: 12px/1.45 var(--f-body); transform-origin: top left; display: flex; flex-direction: column; gap: 26px }
+.sheet .top { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px }
+.sheet .seller-name { font-size: 18px; font-weight: 700 }
+.sheet .doc-title { text-align: right }
+.sheet .doc-title h2 { font-size: 26px; font-weight: 700; letter-spacing: -.01em }
+.sheet .doc-title .no { font: 500 14px var(--f-mono); color: var(--paper-ink) }
+.sheet .muted { color: var(--paper-muted) }
+.sheet .parties { display: grid; grid-template-columns: 1fr 1fr; gap: 28px }
+.sheet .party h4 { margin: 0 0 6px; font: 500 10px var(--f-mono); letter-spacing: .12em; text-transform: uppercase; color: var(--paper-muted); border-bottom: 1px solid var(--paper-line); padding-bottom: 4px }
+.sheet .party .n { font-weight: 600; font-size: 13px }
+.sheet dl { display: grid; grid-template-columns: auto 1fr; gap: 1px 12px; margin: 4px 0 0 }
+.sheet dt { color: var(--paper-muted) }
+.sheet dd { margin: 0; font-variant-numeric: tabular-nums }
+.sheet .dates { display: flex; gap: 32px }
+.sheet .dates div { display: grid }
+.sheet table { width: 100%; border-collapse: collapse }
+.sheet th { font: 500 10px var(--f-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--paper-muted); text-align: left; border-bottom: 1.5px solid var(--paper-ink); padding: 6px 6px 6px 0 }
+.sheet td { padding: 7px 6px 7px 0; border-bottom: 1px solid var(--paper-line); vertical-align: top }
+.sheet .r { text-align: right }
+.sheet td.r, .sheet .tot dd { font-family: var(--f-mono); font-variant-numeric: tabular-nums }
+.sheet .tot { margin-left: auto; width: 300px; display: grid; grid-template-columns: 1fr auto; gap: 3px 16px }
+.sheet .tot dt { color: var(--paper-muted) }
+.sheet .tot .grand { border-top: 1.5px solid var(--paper-ink); padding-top: 6px; margin-top: 4px; font-weight: 700; font-size: 14px; color: var(--paper-ink) }
+.sheet .words { border-left: 3px solid #9e2a35; padding-left: 10px }
+.sheet .foot { margin-top: auto; border-top: 1px solid var(--paper-line); padding-top: 12px; color: var(--paper-muted); font-size: 11px; display: grid; gap: 4px }
+.sheet .example { color: #9e2a35; font: 500 10px var(--f-mono); letter-spacing: .1em; text-transform: uppercase }
+
+.clients { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; align-items: start }
+@media (max-width: 860px) { .clients { grid-template-columns: minmax(0, 1fr) } }
+.toast { position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 20px); transform: translateX(-50%); background: var(--ink); color: var(--bg); padding: 8px 16px; border-radius: var(--r); font-size: 13px; z-index: 20 }
+#pdf-stage { position: fixed; left: -10000px; top: 0 }
+@media (prefers-reduced-motion: no-preference) { .btn, nav button { transition: background .15s, border-color .15s } }
+</style>
+
+<header class="bar">
+  <div class="wrap">
+    <div class="brand"><h1>Rēķinu rīks</h1><span class="stamp">EUR</span></div>
+    <nav>
+      <button id="tab-invoices" data-tab="invoices" aria-current="true">Rēķini</button>
+      <button id="tab-clients" data-tab="clients">Klienti</button>
+      <button id="tab-settings" data-tab="settings">Mani rekvizīti</button>
+    </nav>
+    <span class="store-note" id="store-note">Ielādē datus…</span>
+  </div>
+</header>
+
+<main class="wrap" id="app"></main>
+<div id="pdf-stage"></div>
+<div class="toast" id="toast" hidden></div>
+
+<script>
+"use strict";
+/* ---------- helpers ---------- */
+const $ = (s, el = document) => el.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+const round2 = n => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
+const money = n => new Intl.NumberFormat("lv-LV", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(round2(n || 0));
+const today = () => new Date().toISOString().slice(0, 10);
+const addDays = (iso, d) => { const t = new Date(iso + "T00:00:00Z"); t.setUTCDate(t.getUTCDate() + Number(d || 0)); return t.toISOString().slice(0, 10); };
+const fmtDate = iso => iso ? iso.split("-").reverse().join(".") : "";
+function toast(msg) { const t = $("#toast"); t.textContent = msg; t.hidden = false; clearTimeout(toast.h); toast.h = setTimeout(() => t.hidden = true, 2600); }
+
+/* Summa vārdiem (latviski) */
+const W1 = ["nulle", "viens", "divi", "trīs", "četri", "pieci", "seši", "septiņi", "astoņi", "deviņi"];
+const WT = ["desmit", "vienpadsmit", "divpadsmit", "trīspadsmit", "četrpadsmit", "piecpadsmit", "sešpadsmit", "septiņpadsmit", "astoņpadsmit", "deviņpadsmit"];
+const WD = ["", "", "divdesmit", "trīsdesmit", "četrdesmit", "piecdesmit", "sešdesmit", "septiņdesmit", "astoņdesmit", "deviņdesmit"];
+function under1000(n) {
+  const out = []; const h = Math.floor(n / 100), r = n % 100;
+  if (h) out.push(h === 1 ? "simts" : W1[h] + " simti");
+  if (r >= 10 && r < 20) out.push(WT[r - 10]);
+  else { if (r >= 20) out.push(WD[Math.floor(r / 10)]); if (r % 10) out.push(W1[r % 10]); }
+  return out.join(" ");
+}
+function scale(n, one, many) { const w = under1000(n); return n % 10 === 1 && n % 100 !== 11 ? w + " " + one : w + " " + many; }
+function numWords(n) {
+  if (n === 0) return "nulle";
+  const parts = []; const m = Math.floor(n / 1e6), t = Math.floor(n / 1000) % 1000, r = n % 1000;
+  if (m) parts.push(scale(m, "miljons", "miljoni"));
+  if (t) parts.push(scale(t, "tūkstotis", "tūkstoši"));
+  if (r) parts.push(under1000(r));
+  return parts.join(" ");
+}
+function sumWords(total) {
+  const cents = Math.round(total * 100); const e = Math.floor(cents / 100), c = cents % 100;
+  const s = numWords(e) + " eiro, " + String(c).padStart(2, "0") + (c % 10 === 1 && c !== 11 ? " cents" : " centi");
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+/* ---------- storage: db capability in the artifact, browser storage elsewhere ---------- */
+const LS_KEY = "rekinu-riks-v1";
+const store = {
+  mode: "local", db: null,
+  async init() {
+    if (window.claude && typeof window.claude.use === "function") {
+      try { this.db = await window.claude.use("db"); } catch (e) { this.db = null; }
+      if (this.db) this.mode = "db";
+    }
+  },
+  async load() {
+    if (this.mode === "db") {
+      try {
+        const [s, c, i] = await Promise.all([this.db.doc("config/settings").get(), this.db.collection("clients").get(), this.db.collection("invoices").get()]);
+        return { settings: s.exists ? s.data() : null, clients: c.docs.map(d => ({ ...d.data(), id: d.id })), invoices: i.docs.map(d => ({ ...d.data(), id: d.id })) };
+      } catch (e) { console.warn("db load failed, using browser storage", e); this.mode = "local"; }
+    }
+    try { const raw = localStorage.getItem(LS_KEY); if (raw) return JSON.parse(raw); } catch (e) {}
+    return { settings: null, clients: [], invoices: [] };
+  },
+  saveLocal() { try { localStorage.setItem(LS_KEY, JSON.stringify({ settings: S.settings, clients: S.clients, invoices: S.invoices })); } catch (e) {} },
+  async put(coll, obj) {
+    if (this.mode === "db") { const { id, ...rest } = obj; await this.db.collection(coll).doc(id).set(JSON.parse(JSON.stringify(rest))); }
+    else this.saveLocal();
+  },
+  async del(coll, id) { if (this.mode === "db") await this.db.collection(coll).doc(id).delete(); else this.saveLocal(); },
+  async putSettings(s) { if (this.mode === "db") await this.db.doc("config/settings").set(JSON.parse(JSON.stringify(s))); else this.saveLocal(); }
+};
+
+async function saveFile(filename, blob) {
+  let dl = null;
+  if (window.claude && typeof window.claude.use === "function") { try { dl = await window.claude.use("downloads"); } catch (e) {} }
+  if (dl) {
+    try { await dl.save({ filename, data: blob }); }
+    catch (e) { if (e && e.code !== "declined") toast("Failu neizdevās saglabāt: " + (e.message || e.code)); }
+    return;
+  }
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = filename; document.body.appendChild(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+}
+
+/* ---------- state ---------- */
+const DEFAULT_SETTINGS = {
+  name: "", regNo: "", vatNo: "", address: "", bank: "", swift: "", iban: "", email: "", phone: "",
+  prefix: "RR", vatPayer: false, defaultVat: 21, termDays: 14,
+  footer: "Rēķins sagatavots elektroniski un ir derīgs bez paraksta."
+};
+const S = { settings: { ...DEFAULT_SETTINGS }, clients: [], invoices: [], tab: "invoices", editing: null, filter: "all", q: "", clientEditing: null, loaded: false };
+const VAT_RATES = [21, 12, 5, 0];
+const STATUS = { draft: "Melnraksts", issued: "Izrakstīts", paid: "Apmaksāts", overdue: "Kavēts" };
+
+function statusOf(inv) { return inv.status === "issued" && inv.due && inv.due < today() ? "overdue" : inv.status; }
+function totals(inv, vatPayer) {
+  const byRate = {}; let net = 0;
+  for (const it of inv.items || []) {
+    const line = round2((Number(it.qty) || 0) * (Number(it.price) || 0)); net += line;
+    const rate = vatPayer ? Number(it.vat) || 0 : 0;
+    byRate[rate] = (byRate[rate] || 0) + line;
+  }
+  const vats = Object.keys(byRate).map(Number).sort((a, b) => b - a).map(r => ({ rate: r, base: round2(byRate[r]), vat: round2(byRate[r] * r / 100) }));
+  const vat = round2(vats.reduce((s, v) => s + v.vat, 0));
+  return { net: round2(net), vats, vat, total: round2(net + vat) };
+}
+function nextNumber(dateIso, excludeId) {
+  const s = S.settings; const year = (dateIso || today()).slice(0, 4);
+  const pre = (s.prefix ? s.prefix + "-" : "") + year + "-";
+  let max = 0;
+  for (const i of S.invoices) if (i.id !== excludeId && i.number && i.number.startsWith(pre)) { const n = parseInt(i.number.slice(pre.length), 10); if (n > max) max = n; }
+  return pre + String(max + 1).padStart(3, "0");
+}
+function newInvoice() {
+  const d = today();
+  return { id: uid(), number: nextNumber(d), autoNumber: true, date: d, due: addDays(d, S.settings.termDays), clientId: S.clients[0]?.id || "", status: "draft",
+    items: [{ desc: "", qty: 1, unit: "gab.", price: 0, vat: S.settings.defaultVat }], notes: "", _new: true };
+}
+
+/* ---------- invoice sheet (A4) ---------- */
+function sheetHTML(inv) {
+  const seller = inv._new || inv.status === "draft" ? S.settings : (inv.seller || S.settings);
+  const buyer = (inv.status === "draft" || !inv.buyer) ? (S.clients.find(c => c.id === inv.clientId) || inv.buyer || {}) : inv.buyer;
+  const vp = !!seller.vatPayer; const t = totals(inv, vp);
+  const line = it => round2((Number(it.qty) || 0) * (Number(it.price) || 0));
+  const kv = (k, v) => v ? `<dt>${k}</dt><dd>${esc(v)}</dd>` : "";
+  return `<div class="sheet">
+    ${inv.example ? `<div class="example">Paraugs · aizstāj ar saviem datiem</div>` : ""}
+    <div class="top">
+      <div><div class="seller-name">${esc(seller.name || "Jūsu uzņēmums")}</div><div class="muted">${esc(seller.address || "")}</div></div>
+      <div class="doc-title"><h2>${vp ? "PVN rēķins" : "Rēķins"}</h2><div class="no">Nr. ${esc(inv.number)}</div></div>
+    </div>
+    <div class="dates">
+      <div><span class="muted">Izrakstīšanas datums</span><b>${fmtDate(inv.date)}</b></div>
+      <div><span class="muted">Apmaksāt līdz</span><b>${fmtDate(inv.due)}</b></div>
+    </div>
+    <div class="parties">
+      <div class="party"><h4>Piegādātājs</h4><div class="n">${esc(seller.name || "—")}</div><dl>
+        ${kv("Reģ. nr.", seller.regNo)}${vp ? kv("PVN nr.", seller.vatNo) : ""}${kv("Adrese", seller.address)}
+        ${kv("Banka", seller.bank)}${kv("SWIFT", seller.swift)}${kv("Konts", seller.iban)}${kv("E-pasts", seller.email)}${kv("Tālr.", seller.phone)}</dl></div>
+      <div class="party"><h4>Saņēmējs</h4><div class="n">${esc(buyer.name || "—")}</div><dl>
+        ${kv("Reģ. nr.", buyer.regNo)}${kv("PVN nr.", buyer.vatNo)}${kv("Adrese", buyer.address)}${kv("E-pasts", buyer.email)}</dl></div>
+    </div>
+    <table>
+      <thead><tr><th style="width:28px">Nr.</th><th>Nosaukums</th><th class="r">Daudz.</th><th>Mērv.</th><th class="r">Cena, EUR</th>${vp ? '<th class="r">PVN</th>' : ""}<th class="r">Summa, EUR</th></tr></thead>
+      <tbody>${(inv.items || []).map((it, i) => `<tr><td>${i + 1}</td><td>${esc(it.desc) || '<span class="muted">—</span>'}</td><td class="r">${esc(String(it.qty).replace(".", ","))}</td><td>${esc(it.unit)}</td><td class="r">${money(it.price)}</td>${vp ? `<td class="r">${Number(it.vat) || 0}%</td>` : ""}<td class="r">${money(line(it))}</td></tr>`).join("")}</tbody>
+    </table>
+    <dl class="tot">
+      <dt>Summa bez PVN</dt><dd>${money(t.net)}</dd>
+      ${vp ? t.vats.map(v => `<dt>PVN ${v.rate}% no ${money(v.base)}</dt><dd>${money(v.vat)}</dd>`).join("") : ""}
+      <dt class="grand">Kopā apmaksai, EUR</dt><dd class="grand">${money(t.total)}</dd>
+    </dl>
+    <div class="words"><span class="muted">Summa vārdiem:</span> ${esc(sumWords(t.total))}</div>
+    ${inv.notes ? `<div>${esc(inv.notes).replace(/\n/g, "<br>")}</div>` : ""}
+    <div class="foot">${!vp ? "<div>Piegādātājs nav reģistrēts PVN maksātāju reģistrā.</div>" : ""}<div>${esc(seller.footer || "")}</div>
+      <div>Maksājuma mērķī lūdzam norādīt rēķina numuru ${esc(inv.number)}.</div></div>
+  </div>`;
+}
+function fitSheet() {
+  const frame = $(".sheet-frame"), sh = frame && $(".sheet", frame); if (!sh) return;
+  const k = Math.min(1, frame.clientWidth / 794); sh.style.transform = `scale(${k})`; frame.style.height = (sh.offsetHeight * k) + "px";
+}
+addEventListener("resize", fitSheet);
+
+async function downloadPDF(inv) {
+  if (typeof html2pdf === "undefined") { toast("PDF bibliotēka nav ielādējusies. Pārlādē lapu."); return; }
+  const stage = $("#pdf-stage"); stage.innerHTML = sheetHTML(inv);
+  try {
+    if (document.fonts && document.fonts.ready) await document.fonts.ready;
+    const blob = await html2pdf().set({ margin: 0, image: { type: "jpeg", quality: .96 }, html2canvas: { scale: 2, backgroundColor: "#ffffff" }, jsPDF: { unit: "px", format: [794, 1123], hotfixes: ["px_scaling"] } })
+      .from($(".sheet", stage)).outputPdf("blob");
+    await saveFile(`Rekins_${inv.number.replace(/[^\w.-]+/g, "_")}.pdf`, blob);
+  } catch (e) { console.error(e); toast("PDF neizdevās izveidot."); }
+  finally { stage.innerHTML = ""; }
+}
+
+/* ---------- views ---------- */
+function render() {
+  document.querySelectorAll("nav button").forEach(b => b.setAttribute("aria-current", b.dataset.tab === S.tab));
+  const app = $("#app");
+  if (!S.loaded) { app.innerHTML = `<section class="view"><p class="hint">Ielādē rēķinus…</p></section>`; return; }
+  if (S.tab === "invoices") app.innerHTML = S.editing ? editorView() : listView();
+  else if (S.tab === "clients") app.innerHTML = clientsView();
+  else app.innerHTML = settingsView();
+  if (S.editing) fitSheet();
+}
+function setupBanner() {
+  return S.settings.name ? "" : `<div class="banner"><span>Vispirms ievadi sava uzņēmuma rekvizītus. Tie parādīsies katrā rēķinā.</span><button class="btn" data-act="goto" data-tab="settings">Aizpildīt rekvizītus</button></div>`;
+}
+function listView() {
+  const vp = S.settings.vatPayer;
+  let rows = S.invoices.slice().sort((a, b) => (b.date || "").localeCompare(a.date || "") || (b.number || "").localeCompare(a.number || ""));
+  const sum = { open: 0, overdue: 0, paidYear: 0, n: rows.length };
+  const yr = today().slice(0, 4);
+  for (const i of rows) { const t = totals(i, i.seller ? i.seller.vatPayer : vp).total, st = statusOf(i);
+    if (st === "issued") sum.open += t; if (st === "overdue") { sum.open += t; sum.overdue += t; } if (st === "paid" && (i.date || "").startsWith(yr)) sum.paidYear += t; }
+  if (S.filter !== "all") rows = rows.filter(i => statusOf(i) === S.filter);
+  if (S.q) { const q = S.q.toLowerCase(); rows = rows.filter(i => (i.number + " " + (clientName(i))).toLowerCase().includes(q)); }
+  return `<section class="view">
+    ${setupBanner()}
+    <div class="row"><h2 style="font-size:20px">Rēķini</h2><span class="spacer"></span><button class="btn primary" data-act="new">+ Jauns rēķins</button></div>
+    <div class="summary">
+      <div><span class="eyebrow">Neapmaksāti</span><b>${money(sum.open)} €</b></div>
+      <div><span class="eyebrow">No tiem kavēti</span><b style="color:${sum.overdue ? "var(--bad)" : "inherit"}">${money(sum.overdue)} €</b></div>
+      <div><span class="eyebrow">Apmaksāti ${yr}. gadā</span><b>${money(sum.paidYear)} €</b></div>
+    </div>
+    <div class="filters">
+      <select id="flt" aria-label="Statuss">${[["all", "Visi statusi"], ["draft", "Melnraksti"], ["issued", "Izrakstīti"], ["overdue", "Kavēti"], ["paid", "Apmaksāti"]].map(([v, l]) => `<option value="${v}"${S.filter === v ? " selected" : ""}>${l}</option>`).join("")}</select>
+      <input type="text" id="q" placeholder="Meklēt pēc numura vai klienta" value="${esc(S.q)}" style="min-width:0;flex:1;max-width:320px">
+    </div>
+    <div class="tablewrap">${rows.length ? `<table class="list"><thead><tr><th>Numurs</th><th>Klients</th><th>Datums</th><th>Termiņš</th><th>Statuss</th><th class="r">Summa, EUR</th></tr></thead><tbody>
+      ${rows.map(i => { const st = statusOf(i); return `<tr data-open="${i.id}" tabindex="0"><td class="num">${esc(i.number)}${i.example ? ' <span class="pill draft">paraugs</span>' : ""}</td><td>${esc(clientName(i))}</td><td class="num">${fmtDate(i.date)}</td><td class="num">${fmtDate(i.due)}</td><td><span class="pill ${st}">${STATUS[st]}</span></td><td class="r num">${money(totals(i, i.seller ? i.seller.vatPayer : vp).total)}</td></tr>`; }).join("")}
+      </tbody></table>` : `<div class="empty">${S.invoices.length ? "Neviens rēķins neatbilst filtram." : "Vēl nav neviena rēķina. Spied <b>Jauns rēķins</b>, lai izrakstītu pirmo."}</div>`}</div>
+  </section>`;
+}
+function clientName(i) { return (i.buyer && i.status !== "draft" ? i.buyer.name : (S.clients.find(c => c.id === i.clientId) || i.buyer || {}).name) || "—"; }
+
+function editorView() {
+  const inv = S.editing; const vp = S.settings.vatPayer; const t = totals(inv, vp);
+  return `<section class="view">
+    ${setupBanner()}
+    <div class="row">
+      <button class="btn ghost" data-act="back">← Visi rēķini</button><span class="spacer"></span>
+      ${inv._new ? "" : `<button class="btn" data-act="dup">Dublēt</button>`}
+      ${inv._new ? "" : (S.confirmDel ? `<span class="confirm">Dzēst rēķinu? <button class="btn danger" data-act="del-yes">Dzēst</button><button class="btn" data-act="del-no">Atcelt</button></span>` : `<button class="btn danger" data-act="del">Dzēst</button>`)}
+      <button class="btn" data-act="pdf">Lejupielādēt PDF</button>
+      <button class="btn primary" data-act="save">Saglabāt</button>
+    </div>
+    <div class="editor">
+      <div style="display:grid;gap:16px;min-width:0">
+        <div class="panel">
+          <div class="grid">
+            <label class="f">Rēķina numurs<input type="text" id="i-number" value="${esc(inv.number)}"></label>
+            <label class="f">Statuss<select id="i-status">${["draft", "issued", "paid"].map(s => `<option value="${s}"${inv.status === s ? " selected" : ""}>${STATUS[s]}</option>`).join("")}</select></label>
+            <label class="f">Izrakstīšanas datums<input type="date" id="i-date" value="${inv.date}"></label>
+            <label class="f">Apmaksāt līdz<input type="date" id="i-due" value="${inv.due}"></label>
+            <label class="f span2">Klients<select id="i-client"><option value="">Izvēlies klientu…</option>${S.clients.map(c => `<option value="${c.id}"${c.id === inv.clientId ? " selected" : ""}>${esc(c.name)}</option>`).join("")}</select></label>
+          </div>
+          <p class="hint">Nav klienta sarakstā? <button class="btn ghost" style="padding:0;color:var(--accent)" data-act="goto" data-tab="clients">Pievienot klientu</button></p>
+        </div>
+        <div class="panel">
+          <div class="row"><h2>Pozīcijas</h2><span class="spacer"></span><button class="btn" data-act="add-item">+ Pievienot rindu</button></div>
+          <div class="items">${inv.items.map((it, k) => `<div class="item" data-k="${k}">
+            <label class="f desc"><span>Nosaukums</span><input type="text" id="it-desc-${k}" data-f="desc" value="${esc(it.desc)}" placeholder="Pakalpojums vai prece"></label>
+            <label class="f"><span>Daudz.</span><input type="number" step="any" min="0" id="it-qty-${k}" data-f="qty" value="${esc(it.qty)}"></label>
+            <label class="f"><span>Mērv.</span><input type="text" id="it-unit-${k}" data-f="unit" value="${esc(it.unit)}"></label>
+            <label class="f price"><span>Cena €</span><input type="number" step="0.01" id="it-price-${k}" data-f="price" value="${esc(it.price)}"></label>
+            <label class="f"><span>PVN</span><select id="it-vat-${k}" data-f="vat"${vp ? "" : " disabled"}>${VAT_RATES.map(r => `<option value="${r}"${Number(it.vat) === r ? " selected" : ""}>${r}%</option>`).join("")}</select></label>
+            <button class="del" data-act="rm-item" data-k="${k}" aria-label="Dzēst rindu" title="Dzēst rindu"${inv.items.length < 2 ? " disabled" : ""}>×</button>
+          </div>`).join("")}</div>
+          <div class="row" style="justify-content:flex-end;gap:20px"><span class="hint">Bez PVN <b class="num" id="t-net">${money(t.net)}</b></span>${vp ? `<span class="hint">PVN <b class="num" id="t-vat">${money(t.vat)}</b></span>` : ""}<span>Kopā <b class="num" id="t-total" style="font-size:16px">${money(t.total)} €</b></span></div>
+        </div>
+        <div class="panel"><label class="f">Piezīmes rēķinā<textarea id="i-notes" placeholder="Piemēram, līguma numurs vai pasūtījuma atsauce">${esc(inv.notes)}</textarea></label></div>
+      </div>
+      <div class="sheet-holder"><span class="eyebrow">Priekšskatījums</span><div class="sheet-frame" id="sheet-frame">${sheetHTML(inv)}</div></div>
+    </div>
+  </section>`;
+}
+function refreshPreview() {
+  const inv = S.editing; const frame = $("#sheet-frame"); if (!frame) return;
+  frame.innerHTML = sheetHTML(inv); fitSheet();
+  const t = totals(inv, S.settings.vatPayer);
+  $("#t-net").textContent = money(t.net); if ($("#t-vat")) $("#t-vat").textContent = money(t.vat); $("#t-total").textContent = money(t.total) + " €";
+}
+
+function clientsView() {
+  const c = S.clientEditing || { id: "", name: "", regNo: "", vatNo: "", address: "", email: "" };
+  return `<section class="view"><div class="clients">
+    <div class="panel"><div class="row"><h2>Klienti</h2><span class="spacer"></span><button class="btn" data-act="client-new">+ Jauns klients</button></div>
+      ${S.clients.length ? `<div class="tablewrap" style="border:0"><table class="list" style="min-width:0"><thead><tr><th>Nosaukums</th><th>Reģ. nr.</th><th class="r">Rēķini</th></tr></thead><tbody>
+        ${S.clients.slice().sort((a, b) => a.name.localeCompare(b.name, "lv")).map(x => `<tr data-client="${x.id}" tabindex="0"><td>${esc(x.name)}</td><td class="num">${esc(x.regNo)}</td><td class="r num">${S.invoices.filter(i => i.clientId === x.id).length}</td></tr>`).join("")}
+      </tbody></table></div>` : `<div class="empty">Vēl nav klientu. Pievieno pirmo, un tas būs izvēlams rēķinā.</div>`}
+    </div>
+    <form class="panel" id="client-form">
+      <h2>${c.id ? "Labot klientu" : "Jauns klients"}</h2>
+      <div class="grid">
+        <label class="f span2">Nosaukums<input type="text" id="c-name" value="${esc(c.name)}" required placeholder="SIA Piemērs"></label>
+        <label class="f">Reģistrācijas nr.<input type="text" id="c-regNo" value="${esc(c.regNo)}" placeholder="40000000000"></label>
+        <label class="f">PVN nr.<input type="text" id="c-vatNo" value="${esc(c.vatNo)}" placeholder="LV40000000000"></label>
+        <label class="f span2">Juridiskā adrese<input type="text" id="c-address" value="${esc(c.address)}"></label>
+        <label class="f span2">E-pasts<input type="email" id="c-email" value="${esc(c.email)}"></label>
+      </div>
+      <div class="row"><button class="btn primary" type="submit">Saglabāt klientu</button>${c.id ? (S.confirmDel ? `<span class="confirm">Dzēst klientu? <button class="btn danger" type="button" data-act="client-del-yes">Dzēst</button><button class="btn" type="button" data-act="del-no">Atcelt</button></span>` : `<button class="btn danger" type="button" data-act="client-del">Dzēst</button>`) : ""}</div>
+      ${c.id ? '<p class="hint">Izmaiņas nemaina jau izrakstītos rēķinus. Tajos saglabāti klienta dati izrakstīšanas brīdī.</p>' : ""}
+    </form>
+  </div></section>`;
+}
+
+function settingsView() {
+  const s = S.settings; const f = (k, label, cls = "", ph = "") => `<label class="f ${cls}">${label}<input type="text" id="s-${k}" value="${esc(s[k])}" placeholder="${ph}"></label>`;
+  return `<section class="view"><form class="panel" id="settings-form" style="max-width:820px">
+    <div><span class="eyebrow">Piegādātājs</span><h2>Mani rekvizīti</h2></div>
+    <div class="grid">
+      ${f("name", "Uzņēmuma nosaukums", "span2", "SIA Mans uzņēmums")}${f("regNo", "Reģistrācijas nr.", "", "40000000000")}${f("vatNo", "PVN maksātāja nr.", "", "LV40000000000")}
+      ${f("address", "Juridiskā adrese", "span2", "Iela 1, Rīga, LV-1000")}${f("email", "E-pasts")}${f("phone", "Tālrunis")}
+      ${f("bank", "Banka", "", "Swedbank AS")}${f("swift", "SWIFT", "", "HABALV22")}${f("iban", "Konta nr. (IBAN)", "span2", "LV00HABA0000000000000")}
+    </div>
+    <div><span class="eyebrow">Rēķini</span></div>
+    <div class="grid">
+      ${f("prefix", "Numura prefikss", "", "RR")}
+      <label class="f">Apmaksas termiņš, dienas<input type="number" min="0" id="s-termDays" value="${esc(s.termDays)}"></label>
+      <label class="f">Noklusējuma PVN likme<select id="s-defaultVat">${VAT_RATES.map(r => `<option value="${r}"${Number(s.defaultVat) === r ? " selected" : ""}>${r}%</option>`).join("")}</select></label>
+      <label class="f check"><input type="checkbox" id="s-vatPayer"${s.vatPayer ? " checked" : ""}> Esmu PVN maksātājs</label>
+      <label class="f span2">Teksts rēķina apakšā<input type="text" id="s-footer" value="${esc(s.footer)}"></label>
+    </div>
+    <p class="hint">Numurs veidojas kā <span class="num">${esc(nextNumber(today()))}</span>: prefikss, gads un nākamais kārtas numurs šajā gadā.</p>
+    <div class="row"><button class="btn primary" type="submit">Saglabāt rekvizītus</button><span class="spacer"></span><button class="btn" type="button" data-act="export">Lejupielādēt datu kopiju (JSON)</button></div>
+  </form></section>`;
+}
+
+/* ---------- events ---------- */
+document.addEventListener("click", async e => {
+  const nb = e.target.closest("nav button"); if (nb) { S.tab = nb.dataset.tab; S.editing = null; S.clientEditing = null; S.confirmDel = false; render(); return; }
+  const row = e.target.closest("[data-open]"); if (row) { openInvoice(row.dataset.open); return; }
+  const cr = e.target.closest("[data-client]"); if (cr) { S.clientEditing = { ...S.clients.find(c => c.id === cr.dataset.client) }; S.confirmDel = false; render(); return; }
+  const b = e.target.closest("[data-act]"); if (!b) return;
+  const act = b.dataset.act; const inv = S.editing;
+  if (act === "goto") { S.tab = b.dataset.tab; S.editing = null; render(); }
+  else if (act === "new") { S.editing = newInvoice(); S.confirmDel = false; render(); }
+  else if (act === "back") { S.editing = null; S.confirmDel = false; render(); }
+  else if (act === "add-item") { inv.items.push({ desc: "", qty: 1, unit: "gab.", price: 0, vat: S.settings.defaultVat }); render(); $(`#it-desc-${inv.items.length - 1}`)?.focus(); }
+  else if (act === "rm-item") { inv.items.splice(Number(b.dataset.k), 1); render(); }
+  else if (act === "save") await saveInvoice();
+  else if (act === "pdf") { b.disabled = true; b.textContent = "Veido PDF…"; await downloadPDF(inv); b.disabled = false; b.textContent = "Lejupielādēt PDF"; }
+  else if (act === "dup") { const d = JSON.parse(JSON.stringify(inv)); Object.assign(d, { id: uid(), _new: true, status: "draft", date: today(), due: addDays(today(), S.settings.termDays), example: false, autoNumber: true }); d.number = nextNumber(d.date); delete d.seller; delete d.buyer; S.editing = d; render(); toast("Izveidota kopija. Saglabā, lai to paturētu."); }
+  else if (act === "del") { S.confirmDel = true; render(); }
+  else if (act === "del-no") { S.confirmDel = false; render(); }
+  else if (act === "del-yes") { S.invoices = S.invoices.filter(i => i.id !== inv.id); S.editing = null; S.confirmDel = false; await guarded(() => store.del("invoices", inv.id)); render(); toast("Rēķins dzēsts"); }
+  else if (act === "client-new") { S.clientEditing = null; S.confirmDel = false; render(); $("#c-name")?.focus(); }
+  else if (act === "client-del") { S.confirmDel = true; render(); }
+  else if (act === "client-del-yes") { const id = S.clientEditing.id; S.clients = S.clients.filter(c => c.id !== id); S.clientEditing = null; S.confirmDel = false; await guarded(() => store.del("clients", id)); render(); toast("Klients dzēsts"); }
+  else if (act === "export") { await saveFile(`rekinu-riks-dati-${today()}.json`, new Blob([JSON.stringify({ settings: S.settings, clients: S.clients, invoices: S.invoices }, null, 2)], { type: "application/json" })); }
+});
+document.addEventListener("keydown", e => { if (e.key === "Enter" && e.target.matches("tr[data-open], tr[data-client]")) e.target.click(); });
+
+document.addEventListener("input", e => {
+  const el = e.target;
+  if (el.id === "q") { S.q = el.value; const pos = el.selectionStart; render(); const q = $("#q"); q.focus(); q.setSelectionRange(pos, pos); return; }
+  const inv = S.editing; if (!inv) return;
+  const item = el.closest(".item");
+  if (item && el.dataset.f) { inv.items[Number(item.dataset.k)][el.dataset.f] = el.dataset.f === "desc" || el.dataset.f === "unit" ? el.value : el.value === "" ? "" : Number(el.value); }
+  else if (el.id === "i-number") { inv.number = el.value; inv.autoNumber = false; }
+  else if (el.id === "i-notes") inv.notes = el.value;
+  else if (el.id === "i-date") { const old = inv.date; inv.date = el.value; if (inv.due === addDays(old, S.settings.termDays)) { inv.due = addDays(inv.date, S.settings.termDays); $("#i-due").value = inv.due; } if (inv.autoNumber) { inv.number = nextNumber(inv.date, inv.id); $("#i-number").value = inv.number; } }
+  else if (el.id === "i-due") inv.due = el.value;
+  else return;
+  refreshPreview();
+});
+document.addEventListener("change", e => {
+  const el = e.target;
+  if (el.id === "flt") { S.filter = el.value; render(); return; }
+  const inv = S.editing; if (!inv) return;
+  if (el.id === "i-client") inv.clientId = el.value;
+  else if (el.id === "i-status") inv.status = el.value;
+  else if (el.dataset.f === "vat") inv.items[Number(el.closest(".item").dataset.k)].vat = Number(el.value);
+  else return;
+  refreshPreview();
+});
+document.addEventListener("submit", async e => {
+  e.preventDefault();
+  if (e.target.id === "settings-form") {
+    const s = { ...S.settings };
+    for (const k of ["name", "regNo", "vatNo", "address", "email", "phone", "bank", "swift", "iban", "prefix", "footer"]) s[k] = $("#s-" + k).value.trim();
+    s.termDays = Number($("#s-termDays").value) || 0; s.defaultVat = Number($("#s-defaultVat").value); s.vatPayer = $("#s-vatPayer").checked; delete s.example;
+    S.settings = s; if (await guarded(() => store.putSettings(s))) toast("Rekvizīti saglabāti"); render();
+  }
+  if (e.target.id === "client-form") {
+    const c = { id: S.clientEditing?.id || uid() };
+    for (const k of ["name", "regNo", "vatNo", "address", "email"]) c[k] = $("#c-" + k).value.trim();
+    if (!c.name) { toast("Ievadi klienta nosaukumu"); return; }
+    const i = S.clients.findIndex(x => x.id === c.id); if (i >= 0) S.clients[i] = c; else S.clients.push(c);
+    S.clientEditing = null; if (await guarded(() => store.put("clients", c))) toast("Klients saglabāts"); render();
+  }
+});
+
+async function guarded(fn) { try { await fn(); return true; } catch (e) { console.error(e); toast("Neizdevās saglabāt: " + (e.message || e.code || "kļūda")); return false; } }
+function openInvoice(id) { const i = S.invoices.find(x => x.id === id); if (!i) return; S.editing = JSON.parse(JSON.stringify(i)); S.confirmDel = false; render(); }
+async function saveInvoice() {
+  const inv = S.editing;
+  if (!inv.number.trim()) { toast("Ievadi rēķina numuru"); return; }
+  if (S.invoices.some(i => i.id !== inv.id && i.number === inv.number.trim())) { toast("Rēķins ar šādu numuru jau ir"); return; }
+  if (inv.status !== "draft" && !inv.clientId && !inv.buyer) { toast("Izvēlies klientu"); return; }
+  const out = JSON.parse(JSON.stringify(inv)); delete out._new; out.number = out.number.trim(); out.example = false;
+  if (out.status === "draft" || !out.seller) { out.seller = { ...S.settings }; delete out.seller.example; }
+  const cl = S.clients.find(c => c.id === out.clientId); if (cl && (out.status === "draft" || !inv.buyer || inv._new)) out.buyer = { name: cl.name, regNo: cl.regNo, vatNo: cl.vatNo, address: cl.address, email: cl.email };
+  const k = S.invoices.findIndex(i => i.id === out.id); if (k >= 0) S.invoices[k] = out; else S.invoices.push(out);
+  S.editing = JSON.parse(JSON.stringify(out));
+  if (await guarded(() => store.put("invoices", out))) toast("Rēķins " + out.number + " saglabāts");
+  render();
+}
+
+/* ---------- boot ---------- */
+(async () => {
+  render();
+  await store.init();
+  const data = await store.load();
+  S.settings = { ...DEFAULT_SETTINGS, ...(data.settings || {}) };
+  S.clients = data.clients || []; S.invoices = data.invoices || []; S.loaded = true;
+  $("#store-note").textContent = store.mode === "db" ? "Dati saglabājas tavā kontā" : "Dati saglabājas šajā pārlūkā";
+  render();
+})();
+</script>
+</body></html>
