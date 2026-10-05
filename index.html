@@ -875,7 +875,7 @@ function loadGIS() {
 }
 async function dapi(url, opt = {}) {
   const r = await fetch(url, { ...opt, headers: { Authorization: "Bearer " + DRIVE.tok, ...(opt.headers || {}) } });
-  if (r.status === 401) { DRIVE.tok = null; DRIVE.state = "expired"; driveUI(); throw new Error("Google pieslēgums beidzies"); }
+  if (r.status === 401) { DRIVE.tok = null; DRIVE.state = "expired"; try { localStorage.removeItem(TOK_KEY); } catch (e) {} driveUI(); throw new Error("Google pieslēgums beidzies"); }
   if (!r.ok) throw new Error("Drive kļūda " + r.status);
   return r;
 }
@@ -916,21 +916,36 @@ function mergeRemote(r) {
   }
   if (r.settings && (r.settings.updatedAt || 0) > (S.settings.updatedAt || 0)) S.settings = { ...DEFAULT_SETTINGS, ...r.settings };
 }
+const TOK_KEY = "rr-gtok";
+function tokSave(tok, secs) { try { localStorage.setItem(TOK_KEY, JSON.stringify({ tok, exp: Date.now() + (secs - 120) * 1000 })); } catch (e) {} }
+function tokLoad() { try { const o = JSON.parse(localStorage.getItem(TOK_KEY)); return o && o.exp > Date.now() ? o.tok : null; } catch (e) { return null; } }
+async function driveSync() {
+  await driveEnsure();
+  if (DRIVE.fileId) mergeRemote(await (await dapi(`https://www.googleapis.com/drive/v3/files/${DRIVE.fileId}?alt=media`)).json());
+  store.saveLocal.call(store); clearTimeout(DRIVE.timer);
+  await drivePush();
+  DRIVE.state = "on"; try { localStorage.setItem("rr-drive", "1"); } catch (e) {}
+}
+async function driveResume() {
+  if (!driveOn()) return;
+  const t = tokLoad(); if (!t) return;
+  DRIVE.tok = t; DRIVE.state = "busy"; driveUI();
+  try { await driveSync(); render(); } catch (e) { console.warn(e); DRIVE.tok = null; DRIVE.state = "off"; try { localStorage.removeItem(TOK_KEY); } catch (x) {} }
+  driveUI();
+}
 async function driveConnect() {
   if (!gcid()) { S.tab = "settings"; S.editing = null; render(); toast("Vispirms ievadi Google Client ID"); return; }
   DRIVE.state = "busy"; DRIVE.err = ""; driveUI();
   try {
     await loadGIS();
-    DRIVE.tok = await new Promise((res, rej) => google.accounts.oauth2.initTokenClient({
-      client_id: gcid(), scope: "https://www.googleapis.com/auth/drive.file", prompt: "select_account", hint: ghint(),
-      callback: r => r.error ? rej(new Error(r.error_description || r.error)) : res(r.access_token),
+    const seen = (() => { try { return !!localStorage.getItem("rr-drive"); } catch (e) { return false; } })();
+    const r = await new Promise((res, rej) => google.accounts.oauth2.initTokenClient({
+      client_id: gcid(), scope: "https://www.googleapis.com/auth/drive.file", hint: ghint(), prompt: seen ? "" : "select_account",
+      callback: x => x.error ? rej(new Error(x.error_description || x.error)) : res(x),
       error_callback: e => rej(new Error(e.type === "popup_closed" ? "Pieslēgšanās atcelta" : (e.message || e.type || "kļūda")))
     }).requestAccessToken());
-    await driveEnsure();
-    if (DRIVE.fileId) mergeRemote(await (await dapi(`https://www.googleapis.com/drive/v3/files/${DRIVE.fileId}?alt=media`)).json());
-    store.saveLocal.call(store); clearTimeout(DRIVE.timer);
-    await drivePush();
-    DRIVE.state = "on"; try { localStorage.setItem("rr-drive", "1"); } catch (e) {}
+    DRIVE.tok = r.access_token; tokSave(r.access_token, Number(r.expires_in) || 3600);
+    await driveSync();
     toast("Pieslēgts Google Drive"); render();
   } catch (e) { console.warn(e); DRIVE.tok = null; DRIVE.state = "off"; DRIVE.err = e.message; toast("Google Drive: " + e.message); }
   driveUI();
@@ -973,6 +988,7 @@ $("#drive-btn").addEventListener("click", driveConnect);
   $("#store-note").textContent = store.mode === "db" ? "Dati saglabājas tavā kontā" : "Dati saglabājas šajā pārlūkā";
   render();
   driveUI(); lockUI(); idleReset();
+  driveResume();
 })();
 </script>
 <script>
