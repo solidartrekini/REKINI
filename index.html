@@ -792,7 +792,7 @@ async function driveConnect() {
   try {
     await loadGIS();
     DRIVE.tok = await new Promise((res, rej) => google.accounts.oauth2.initTokenClient({
-      client_id: gcid(), scope: "https://www.googleapis.com/auth/drive.file",
+      client_id: gcid(), scope: "https://www.googleapis.com/auth/drive.file", prompt: "select_account",
       callback: r => r.error ? rej(new Error(r.error_description || r.error)) : res(r.access_token),
       error_callback: e => rej(new Error(e.type === "popup_closed" ? "Pieslēgšanās atcelta" : (e.message || e.type || "kļūda")))
     }).requestAccessToken());
