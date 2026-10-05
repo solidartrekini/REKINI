@@ -248,11 +248,11 @@ const store = {
     try { localStorage.setItem(LS_KEY, data); } catch (e) {}
   },
   async put(coll, obj) {
-    obj.updatedAt = Date.now();
+    obj.updatedAt = Date.now(); if (coll === "clients") DRIVE.clientsDirty = true;
     if (this.mode === "db") { const { id, ...rest } = obj; await this.db.collection(coll).doc(id).set(JSON.parse(JSON.stringify(rest))); }
     else this.saveLocal();
   },
-  async del(coll, id) { if (this.mode === "db") await this.db.collection(coll).doc(id).delete(); else this.saveLocal(); },
+  async del(coll, id) { if (coll === "clients") DRIVE.clientsDirty = true; if (this.mode === "db") await this.db.collection(coll).doc(id).delete(); else this.saveLocal(); },
   async putSettings(s) { s.updatedAt = Date.now(); if (this.mode === "db") await this.db.doc("config/settings").set(JSON.parse(JSON.stringify(s))); else this.saveLocal(); }
 };
 
@@ -577,10 +577,17 @@ function refreshPreview() {
   $("#t-net").textContent = money(t.net); if ($("#t-vat")) $("#t-vat").textContent = money(t.vat); $("#t-total").textContent = money(t.total) + " €";
 }
 
+function driveClientsNote() {
+  if (!driveOn()) return "";
+  if (DRIVE.sheetErr) return `<p class="err">Google Sheets: ${esc(DRIVE.sheetErr)}. Ieslēdz <a href="https://console.cloud.google.com/apis/library/sheets.googleapis.com" target="_blank" rel="noopener">Google Sheets API</a> savā projektā un pieslēdzies vēlreiz.</p>`;
+  if (DRIVE.sheetId) return `<p class="hint"><a href="https://docs.google.com/spreadsheets/d/${DRIVE.sheetId}/edit" target="_blank" rel="noopener">Atvērt klientu tabulu Google Sheets</a>. Izmaiņas tabulā parādās, atverot šo cilni.</p>`;
+  return `<p class="hint">Pieslēdzies Google Drive, lai klienti glabātos Sheets tabulā.</p>`;
+}
 function clientsView() {
   const c = S.clientEditing || { id: "", name: "", regNo: "", vatNo: "", address: "", email: "" };
   return `<section class="view"><div class="clients">
     <div class="panel"><div class="row"><h2>Klienti</h2><span class="spacer"></span><button class="btn" data-act="client-new">+ Jauns klients</button></div>
+      ${driveClientsNote()}
       ${S.clients.length ? `<div class="tablewrap" style="border:0"><table class="list" style="min-width:0"><thead><tr><th>Nosaukums</th><th>Reģ. nr.</th><th class="r">Rēķini</th></tr></thead><tbody>
         ${S.clients.slice().sort((a, b) => a.name.localeCompare(b.name, "lv")).map(x => `<tr data-client="${x.id}" tabindex="0"><td>${esc(x.name)}</td><td class="num">${esc(x.regNo)}</td><td class="r num">${S.invoices.filter(i => i.clientId === x.id).length}</td></tr>`).join("")}
       </tbody></table></div>` : `<div class="empty">Vēl nav klientu. Pievieno pirmo, un tas būs izvēlams rēķinā.</div>`}
@@ -630,7 +637,11 @@ function settingsView() {
 
 /* ---------- events ---------- */
 document.addEventListener("click", async e => {
-  const nb = e.target.closest("nav button"); if (nb) { S.tab = nb.dataset.tab; S.editing = null; S.clientEditing = null; S.confirmDel = false; render(); return; }
+  const nb = e.target.closest("nav button"); if (nb) {
+    S.tab = nb.dataset.tab; S.editing = null; S.clientEditing = null; S.confirmDel = false; render();
+    if (S.tab === "clients" && DRIVE.tok) sheetPull().then(() => { if (S.tab === "clients" && !S.clientEditing && !($("#c-name") && $("#c-name").value)) render(); });
+    return;
+  }
   const row = e.target.closest("[data-open]"); if (row) { openInvoice(row.dataset.open); return; }
   const cr = e.target.closest("[data-client]"); if (cr) { S.clientEditing = { ...S.clients.find(c => c.id === cr.dataset.client) }; S.confirmDel = false; render(); return; }
   const b = e.target.closest("[data-act]"); if (!b) return;
@@ -859,7 +870,7 @@ let idleT; const idleReset = () => { clearTimeout(idleT); if (LOCK.key) idleT = 
 ["click", "keydown", "pointerdown"].forEach(ev => document.addEventListener(ev, idleReset, { passive: true }));
 
 /* ---------- Google Drive (tikai ārpus claude.ai; dati: mape "Rēķinu rīks" ar rekinu-riks-dati.json un PDF failiem) ---------- */
-const DRIVE = { tok: null, folderId: null, fileId: null, timer: null, state: "off", err: "" };
+const DRIVE = { tok: null, folderId: null, fileId: null, timer: null, state: "off", err: "", sheetId: null, sheetErr: "", clientsDirty: false };
 const DRIVE_FOLDER = "Rēķinu rīks", DRIVE_FILE = "rekinu-riks-dati.json";
 const DEFAULT_GCLIENT = "310657916605-1ikcu7lkiekvbtfb6se5f081d096lnjs.apps.googleusercontent.com"; /* OAuth Client ID nav noslēpums */
 const DEFAULT_GHINT = "solidartrekini@gmail.com";
@@ -899,6 +910,7 @@ async function drivePush() {
   const data = JSON.stringify({ settings: S.settings, clients: S.clients, invoices: S.invoices });
   if (DRIVE.fileId) await dapi(`https://www.googleapis.com/upload/drive/v3/files/${DRIVE.fileId}?uploadType=media`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: data });
   else { const m = multipart({ name: DRIVE_FILE, parents: [DRIVE.folderId] }, new Blob([data]), "application/json"); DRIVE.fileId = (await (await dapi("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id", { method: "POST", headers: { "Content-Type": m.type }, body: m.body })).json()).id; }
+  if (DRIVE.clientsDirty) { try { await sheetPush(); DRIVE.clientsDirty = false; DRIVE.sheetErr = ""; } catch (e) { console.warn(e); DRIVE.sheetErr = e.message; } }
 }
 const MONTHS = ["Janvāris", "Februāris", "Marts", "Aprīlis", "Maijs", "Jūnijs", "Jūlijs", "Augusts", "Septembris", "Oktobris", "Novembris", "Decembris"];
 async function driveDir(name, parent) {
@@ -929,9 +941,54 @@ function mergeRemote(r) {
 const TOK_KEY = "rr-gtok";
 function tokSave(tok, secs) { try { localStorage.setItem(TOK_KEY, JSON.stringify({ tok, exp: Date.now() + (secs - 120) * 1000 })); } catch (e) {} }
 function tokLoad() { try { const o = JSON.parse(localStorage.getItem(TOK_KEY)); return o && o.exp > Date.now() ? o.tok : null; } catch (e) { return null; } }
+const SHEET_HEAD = ["Nosaukums", "Reģistrācijas nr.", "PVN nr.", "Adrese", "E-pasts", "ID (nemainīt)"];
+async function sapi(url, opt = {}) {
+  const r = await fetch(url, { ...opt, headers: { Authorization: "Bearer " + DRIVE.tok, ...(opt.headers || {}) } });
+  if (r.status === 401) { DRIVE.tok = null; DRIVE.state = "expired"; try { localStorage.removeItem(TOK_KEY); } catch (e) {} driveUI(); throw new Error("Google pieslēgums beidzies"); }
+  if (!r.ok) { let m = ""; try { m = (await r.json()).error.message; } catch (e) {} throw new Error(m || "Sheets kļūda " + r.status); }
+  return r;
+}
+const SHEETS = "https://sheets.googleapis.com/v4/spreadsheets/";
+async function sheetEnsure() {
+  await driveEnsure();
+  if (DRIVE.sheetId) return false;
+  const f = (await (await dapi(dq(`name='Klienti' and mimeType='application/vnd.google-apps.spreadsheet' and '${DRIVE.folderId}' in parents and trashed=false`))).json()).files;
+  if (f[0]) { DRIVE.sheetId = f[0].id; return false; }
+  DRIVE.sheetId = (await (await dapi("https://www.googleapis.com/drive/v3/files", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: "Klienti", mimeType: "application/vnd.google-apps.spreadsheet", parents: [DRIVE.folderId] }) })).json()).id;
+  return true;
+}
+async function sheetPush() {
+  await sheetEnsure();
+  const rows = [SHEET_HEAD, ...S.clients.map(c => [c.name || "", c.regNo || "", c.vatNo || "", c.address || "", c.email || "", c.id])];
+  await sapi(`${SHEETS}${DRIVE.sheetId}/values/A2:F5000:clear`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+  await sapi(`${SHEETS}${DRIVE.sheetId}/values/A1:F${rows.length}?valueInputOption=RAW`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ values: rows }) });
+}
+async function sheetPull() {
+  if (!DRIVE.tok || !driveOn()) return;
+  try {
+    const created = await sheetEnsure();
+    const vals = (await (await sapi(`${SHEETS}${DRIVE.sheetId}/values/A1:F5000`)).json()).values || [];
+    const body = vals.slice(1).filter(r => (r[0] || "").trim());
+    if (created || !body.length) {
+      DRIVE.clientsDirty = true; // tabula tukša: ieliek klientus no pārlūka
+    } else {
+      let gen = false;
+      const known = new Map(S.clients.map(c => [c.id, c]));
+      const next = body.map(r => {
+        let id = (r[5] || "").trim(); if (!id) { id = uid(); gen = true; }
+        return { ...(known.get(id) || {}), id, name: String(r[0] || "").trim(), regNo: String(r[1] || "").trim(), vatNo: String(r[2] || "").trim(), address: String(r[3] || "").trim(), email: String(r[4] || "").trim(), updatedAt: (known.get(id) || {}).updatedAt || Date.now() };
+      });
+      const same = JSON.stringify(next.map(({ updatedAt, ...c }) => c)) === JSON.stringify(S.clients.map(({ updatedAt, ...c }) => c));
+      if (!same) { S.clients = next; store.saveLocal(); }
+      if (gen) DRIVE.clientsDirty = true;
+    }
+    DRIVE.sheetErr = "";
+  } catch (e) { console.warn(e); DRIVE.sheetErr = e.message; }
+}
 async function driveSync() {
   await driveEnsure();
   if (DRIVE.fileId) mergeRemote(await (await dapi(`https://www.googleapis.com/drive/v3/files/${DRIVE.fileId}?alt=media`)).json());
+  await sheetPull();
   store.saveLocal.call(store); clearTimeout(DRIVE.timer);
   await drivePush();
   DRIVE.state = "on"; try { localStorage.setItem("rr-drive", "1"); } catch (e) {}
