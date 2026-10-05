@@ -482,7 +482,7 @@ async function downloadPDF(inv) {
   try {
     const blob = new Blob([await buildPdfBytes(inv)], { type: "application/pdf" });
     const pdfName = `Rekins_${inv.number.replace(/[^\w.-]+/g, "_")}.pdf`;
-    if (DRIVE.tok) { try { await driveUploadPdf(pdfName, blob); toast("PDF saglabāts Google Drive"); } catch (e) { console.warn(e); toast("PDF neizdevās saglabāt Drive: " + e.message); } }
+    if (DRIVE.tok) { try { await driveUploadPdf(pdfName, blob, inv.date); toast("PDF saglabāts Google Drive"); } catch (e) { console.warn(e); toast("PDF neizdevās saglabāt Drive: " + e.message); } }
     await saveFile(pdfName, blob);
   } catch (e) { console.error(e); toast("PDF neizdevās izveidot."); }
 }
@@ -900,11 +900,21 @@ async function drivePush() {
   if (DRIVE.fileId) await dapi(`https://www.googleapis.com/upload/drive/v3/files/${DRIVE.fileId}?uploadType=media`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: data });
   else { const m = multipart({ name: DRIVE_FILE, parents: [DRIVE.folderId] }, new Blob([data]), "application/json"); DRIVE.fileId = (await (await dapi("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id", { method: "POST", headers: { "Content-Type": m.type }, body: m.body })).json()).id; }
 }
-async function driveUploadPdf(name, blob) {
+const MONTHS = ["Janvāris", "Februāris", "Marts", "Aprīlis", "Maijs", "Jūnijs", "Jūlijs", "Augusts", "Septembris", "Oktobris", "Novembris", "Decembris"];
+async function driveDir(name, parent) {
+  const key = parent + "/" + name; DRIVE.dirs = DRIVE.dirs || {};
+  if (DRIVE.dirs[key]) return DRIVE.dirs[key];
+  const f = (await (await dapi(dq(`name='${name}' and mimeType='application/vnd.google-apps.folder' and '${parent}' in parents and trashed=false`))).json()).files;
+  DRIVE.dirs[key] = f[0] ? f[0].id : (await (await dapi("https://www.googleapis.com/drive/v3/files", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, mimeType: "application/vnd.google-apps.folder", parents: [parent] }) })).json()).id;
+  return DRIVE.dirs[key];
+}
+async function driveUploadPdf(name, blob, dateIso) {
   await driveEnsure();
-  const found = (await (await dapi(dq(`name='${name}' and '${DRIVE.folderId}' in parents and trashed=false`))).json()).files;
+  const [yy, mm] = (dateIso || today()).split("-");
+  const dir = await driveDir(`${mm} ${MONTHS[Number(mm) - 1]}`, await driveDir(yy, await driveDir("Rēķini", DRIVE.folderId)));
+  const found = (await (await dapi(dq(`name='${name}' and '${dir}' in parents and trashed=false`))).json()).files;
   if (found[0]) { await dapi(`https://www.googleapis.com/upload/drive/v3/files/${found[0].id}?uploadType=media`, { method: "PATCH", headers: { "Content-Type": "application/pdf" }, body: blob }); return; }
-  const m = multipart({ name, parents: [DRIVE.folderId] }, blob, "application/pdf");
+  const m = multipart({ name, parents: [dir] }, blob, "application/pdf");
   await dapi("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart", { method: "POST", headers: { "Content-Type": m.type }, body: m.body });
 }
 function mergeRemote(r) {
