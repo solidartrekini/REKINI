@@ -218,6 +218,18 @@ function sumWords(total) {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
+function askToken(msg) {
+  return new Promise(res => {
+    const o = document.createElement("div"); o.style.cssText = "position:fixed;inset:0;z-index:300;background:rgba(0,0,0,.6);display:grid;place-items:center;padding:16px";
+    o.innerHTML = '<form style="background:#fff;color:#18201e;padding:18px;border-radius:10px;width:min(420px,100%);display:grid;gap:12px;font:15px system-ui,sans-serif"><b></b><input type="password" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false" style="font-size:16px;padding:10px;border:1px solid #999;border-radius:6px;width:100%;background:#fff;color:#18201e"><label style="display:flex;gap:6px;align-items:center;font-size:13px"><input type="checkbox"> Rādīt rakstzīmes</label><div style="display:flex;gap:8px;justify-content:flex-end"><button type="button" data-c style="padding:8px 14px">Atcelt</button><button type="submit" style="padding:8px 14px;font-weight:600">Labi</button></div></form>';
+    o.querySelector("b").textContent = msg; const inp = o.querySelector("input"), cb = o.querySelector("input[type=checkbox]");
+    cb.addEventListener("change", () => { inp.type = cb.checked ? "text" : "password"; });
+    const done = v => { o.remove(); res(v); };
+    o.querySelector("form").addEventListener("submit", e => { e.preventDefault(); done(inp.value.replace(/[\s\u200b-\u200d\ufeff]/g, "").replace(/^["'“”‘’]+|["'“”‘’]+$/g, "")); });
+    o.querySelector("[data-c]").addEventListener("click", () => done(""));
+    document.body.appendChild(o); inp.focus();
+  });
+}
 /* ---------- storage: db capability in the artifact, browser storage elsewhere ---------- */
 const LS_KEY = "rekinu-riks-v1";
 const store = {
@@ -234,7 +246,7 @@ const store = {
   tokenKey: "rr-token",
   async srv(path, opt = {}, retry = true) {
     let t = ""; try { t = localStorage.getItem(this.tokenKey) || ""; } catch (e) {}
-    if (!t) { t = (prompt("Ievadi rīka piekļuves atslēgu (APP_TOKEN no Cloudflare):") || "").trim(); if (t) try { localStorage.setItem(this.tokenKey, t); } catch (e) {} }
+    if (!t) { t = await askToken("Ievadi rīka piekļuves atslēgu (APP_TOKEN no Cloudflare):"); if (t) try { localStorage.setItem(this.tokenKey, t); } catch (e) {} }
     const r = await fetch("api/" + path, { ...opt, headers: { Authorization: "Bearer " + t, "Content-Type": "application/json" } });
     if (r.status === 401) { try { localStorage.removeItem(this.tokenKey); } catch (e) {} if (retry) return this.srv(path, opt, false); throw new Error("Nepareiza piekļuves atslēga"); }
     if (!r.ok) { let m = ""; try { m = (await r.json()).error; } catch (e) {} throw new Error(m || "Servera kļūda " + r.status); }

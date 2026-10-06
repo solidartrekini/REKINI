@@ -5,7 +5,7 @@ const COLL = new Set(["clients", "invoices", "config"]);
 
 async function eq(a, b) {
   const h = async s => new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s)));
-  const [x, y] = [await h(a), await h(b)];
+  const [x, y] = [await h(String(a).trim()), await h(String(b).trim())];
   let d = 0; for (let i = 0; i < x.length; i++) d |= x[i] ^ y[i];
   return d === 0;
 }
