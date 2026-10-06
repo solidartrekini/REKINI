@@ -423,6 +423,7 @@ function fitSheet() {
 addEventListener("resize", fitSheet);
 
 async function buildPdfBytes(inv) {
+  if (inv.imported && store.mode === "server") { try { return await srvBlob("acc/invoices/" + encodeURIComponent(inv.id)); } catch (e) { console.warn("Oriģinālais PDF nav pieejams, veido jaunu", e); } }
   const { PDFDocument, rgb } = PDFLib;
   const doc = await PDFDocument.create(); doc.registerFontkit(fontkit);
   const reg = await doc.embedFont(unb64(FONT_R), { subset: true });
@@ -560,6 +561,131 @@ async function drivePdfQuiet(inv) {
     toast("Rēķins " + inv.number + " saglabāts Google Drive");
   } catch (e) { console.warn(e); toast("PDF neizdevās saglabāt Drive: " + e.message); }
 }
+/* ---------- veco rēķinu PDF imports ---------- */
+const PDFJS_URL = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/";
+function loadScriptOnce(src) { return new Promise((res, rej) => { const s = document.createElement("script"); s.src = src; s.onload = res; s.onerror = () => rej(new Error("Neizdevās ielādēt " + src)); document.head.appendChild(s); }); }
+async function pdfTextItems(buf) {
+  if (!window.pdfjsLib) { await loadScriptOnce(PDFJS_URL + "pdf.min.js"); pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS_URL + "pdf.worker.min.js"; }
+  const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(buf.slice(0)) }).promise;
+  const page = await pdf.getPage(1), vp = page.getViewport({ scale: 1 }), tc = await page.getTextContent();
+  let items = tc.items.filter(i => i.str && i.str.trim()).map(i => ({ s: i.str.trim(), x: i.transform[4], y: i.transform[5] }));
+  for (let n = 2; n <= Math.min(pdf.numPages, 3); n++) { const t = await (await pdf.getPage(n)).getTextContent(); items = items.concat(t.items.filter(i => i.str && i.str.trim()).map(i => ({ s: i.str.trim(), x: i.transform[4], y: i.transform[5] - (n - 1) * 2000 }))); }
+  return { items, width: vp.width };
+}
+function groupLines(items) {
+  const rows = new Map();
+  for (const it of items) { const k = Math.round(it.y / 3); (rows.get(k) || rows.set(k, []).get(k)).push(it); }
+  return [...rows.entries()].sort((a, b) => b[0] - a[0]).map(([, r]) => r.sort((a, b) => a.x - b.x));
+}
+const DATE_RE = /\b(\d{1,2})[./-](\d{1,2})[./-](\d{4})\b|\b(\d{4})-(\d{2})-(\d{2})\b/g;
+function datesIn(t) { const out = []; for (const m of t.matchAll(DATE_RE)) { const iso = m[4] ? `${m[4]}-${m[5]}-${m[6]}` : `${m[3]}-${String(m[2]).padStart(2, "0")}-${String(m[1]).padStart(2, "0")}`; if (!isNaN(Date.parse(iso)) && +iso.slice(0, 4) > 1999) out.push(iso); } return out; }
+const AMT_RE = /-?\d{1,3}(?:[  ]\d{3})+[.,]\d{2}\b|-?\d+[.,]\d{2}\b/g;
+const amtNum = t => { let s = t.replace(/[\s ]/g, ""); const c = s.lastIndexOf(","), d = s.lastIndexOf("."); s = c > d ? s.replace(/\./g, "").replace(",", ".") : s.replace(/,/g, ""); return Number(s); };
+async function parseOldInvoice(file) {
+  const buf = await file.arrayBuffer(), { items, width } = await pdfTextItems(buf);
+  const lines = groupLines(items), L = lines.map(r => r.map(i => i.s).join(" ")), text = L.join("\n");
+  const res = { file: file.name, buf, text: !!text.trim() };
+  if (!text.trim()) return { ...res, number: "", date: "", due: "", name: "", regNo: "", address: "", total: "", desc: "" };
+  // numurs
+  let m = /(?:PVN\s+rēķins|Rēķins|Faktūrrēķins|Invoice)\s*(?:Nr\.?|№|No\.?)\s*:?\s*([A-Za-z0-9][\w\-\/.]*)/i.exec(text) || /\bNr\.?\s*:?\s*([A-Z]{1,6}[\-\/]?\d[\w\-\/.]*)/.exec(text);
+  let number = m ? m[1].replace(/[.,;]+$/, "") : ""; if (!number) { const fm = /([A-Z]{1,6}-\d{4}-\d{1,5}|[A-Z]{1,6}-\d{1,8})/i.exec(file.name); if (fm) number = fm[1]; }
+  // datumi
+  const lab = (re) => { const mm = re.exec(text); if (!mm) return ""; const ds = datesIn(text.slice(mm.index + mm[0].length, mm.index + mm[0].length + 40)); return ds[0] || ""; };
+  const all = datesIn(text);
+  let date = lab(/(Izrakstīšanas\s+datums|Rēķina\s+datums|Izrakstīts|Datums)\s*:?/i), due = lab(/(Apmaksāt\s+līdz|Apmaksas\s+termiņš|Termiņš|Samaksāt\s+līdz)\s*:?/i);
+  if (date && due && date === due && all.length > 1) { due = all.find(d => d !== date) || due; }
+  if (!date) date = all.slice().sort()[0] || "";
+  if (!due) due = all.filter(d => d > date).sort()[0] || "";
+  // summa
+  let total = "";
+  const lineAmt = (idx) => { const a = [...(L[idx] || "").matchAll(AMT_RE)].map(x => x[0]); return a.length ? a[a.length - 1] : ""; };
+  for (const re of [/Kopā\s+apmaksai/i, /(Summa\s+)?apmaksai/i, /^(Kopā|Total|Kopsumma)\b/i]) {
+    const idx = L.findIndex(l => re.test(l)); if (idx >= 0) { total = lineAmt(idx) || lineAmt(idx + 1); if (total) break; }
+  }
+  if (!total) { const a = [...text.matchAll(AMT_RE)].map(x => amtNum(x[0])).filter(x => x > 0); total = a.length ? String(Math.max(...a)) : ""; }
+  else total = String(amtNum(total));
+  // pircējs
+  const own = (S.settings.regNo || "").replace(/\D/g, "");
+  let name = "", regNo = "", address = "";
+  const lbl = items.find(i => /^(Saņēmējs|Pasūtītājs|Maksātājs|Klients|Pircējs|Bill\s*to|Customer)\b/i.test(i.s));
+  if (lbl) {
+    const col = items.filter(i => i.x >= lbl.x - 6 && i.x < Math.max(lbl.x + 250, width) && i.y < lbl.y - 1 && i.y > lbl.y - 120);
+    const cl = groupLines(col).map(r => r.map(i => i.s).join(" "));
+    name = (cl[0] || "").replace(/^(Nosaukums|Vārds)\s*:?\s*/i, "");
+    const ct = cl.join("\n"), rm = /\b(\d{11})\b/.exec(ct.replace(/(?:PVN|VAT)\s*nr\.?\s*:?\s*LV\d{11}/gi, "")); regNo = rm ? rm[1] : "";
+    const am = /Adrese\s*:?\s*(.+)/i.exec(ct); address = am ? am[1].trim() : "";
+  }
+  if (!regNo) { const r = [...text.matchAll(/\b(\d{11})\b/g)].map(x => x[1]).find(x => x !== own); regNo = r || ""; }
+  if (regNo === own) regNo = "";
+  // apraksts
+  let desc = "";
+  const hi = L.findIndex(l => /Nosaukums|Apraksts|Pakalpojums|Description/i.test(l));
+  if (hi >= 0) for (let k = hi + 1; k < Math.min(L.length, hi + 6); k++) { if (/^(Summa bez|Kopā|PVN|Total)/i.test(L[k])) break; const c = L[k].replace(/^\d+\s+/, "").replace(/(\s+(?:-?[\d.,%]+|gab\.?|st\.?|h|stundas?|kompl\.?|mēn\.?|EUR))+\s*$/i, "").trim(); if (c.length > 2) { desc = c; break; } }
+  return { ...res, number, date, due, name, regNo, address, total, desc };
+}
+async function enrichFromUr(r) {
+  if (!r.regNo || (r.name && r.address)) return r;
+  try { await urLoad(); if (UR.rows) { const row = UR.rows.find(x => x[0] === r.regNo); if (row) { r.name = r.name || row[1]; r.address = r.address || row[2]; } } } catch (e) {}
+  return r;
+}
+function impDialog(rows) {
+  closeImp();
+  const el = document.createElement("div"); el.id = "imp";
+  el.style.cssText = "position:fixed;inset:0;z-index:50;background:rgb(0 0 0/.55);display:grid;place-items:start center;padding:24px 12px;overflow:auto";
+  const dup = r => !!r.number && S.invoices.some(i => i.number === r.number.trim());
+  el.innerHTML = `<div class="panel" style="width:min(1000px,100%);background:var(--surface);padding:18px;border-radius:8px;display:grid;gap:12px">
+    <div><span class="eyebrow">Imports</span><h2 style="margin:0;font-size:18px">Pārbaudi atpazītos rēķinu datus</h2></div>
+    <p class="hint">Dati nolasīti automātiski no PDF teksta. Pārbaudi un labo, ja kas nav pareizi. Rēķini, kuru numurs jau ir sistēmā, pēc noklusējuma netiek importēti.</p>
+    <div style="overflow-x:auto"><table class="list" style="width:100%;min-width:860px;border-collapse:collapse"><thead><tr><th></th><th>Fails</th><th>Numurs</th><th>Datums</th><th>Termiņš</th><th>Klients</th><th>Reģ. nr.</th><th>Summa</th></tr></thead><tbody>
+    ${rows.map((r, i) => `<tr data-i="${i}"><td><input type="checkbox" data-f="inc"${dup(r) || !r.text ? "" : " checked"}></td>
+      <td style="max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(r.file)}">${esc(r.file)}${!r.text ? `<br><small style="color:var(--bad)">PDF bez teksta (skenēts?). Aizpildi pats.</small>` : dup(r) ? `<br><small style="color:var(--bad)">Numurs jau ir</small>` : ""}</td>
+      <td><input type="text" data-f="number" value="${esc(r.number)}" style="width:120px"></td>
+      <td><input type="date" data-f="date" value="${esc(r.date)}"></td><td><input type="date" data-f="due" value="${esc(r.due)}"></td>
+      <td><input type="text" data-f="name" value="${esc(r.name)}" style="width:190px"></td><td><input type="text" data-f="regNo" value="${esc(r.regNo)}" style="width:110px"></td>
+      <td><input type="text" data-f="total" value="${esc(r.total)}" style="width:90px" inputmode="decimal"></td></tr>`).join("")}
+    </tbody></table></div>
+    <label class="row" style="gap:8px"><input type="checkbox" id="imp-paid" checked> Atzīmēt importētos rēķinus kā apmaksātus</label>
+    <div class="row"><button class="btn primary" id="imp-go" type="button">Importēt</button><button class="btn" id="imp-cancel" type="button">Atcelt</button></div></div>`;
+  document.body.appendChild(el);
+  const rd = () => [...el.querySelectorAll("tbody tr")].map((tr, i) => { const o = { ...rows[i] }; tr.querySelectorAll("[data-f]").forEach(x => { o[x.dataset.f] = x.type === "checkbox" ? x.checked : x.value.trim(); }); return o; });
+  $("#imp-cancel").onclick = closeImp;
+  $("#imp-go").onclick = async () => {
+    const list = rd().filter(r => r.inc); if (!list.length) { toast("Nav atzīmēts neviens rēķins"); return; }
+    const bad = list.find(r => !r.number || !r.date || !(amtNum(String(r.total || "").replace(/[^\d,.\-]/g, "")) > 0) || !r.name);
+    if (bad) { toast(`Aizpildi numuru, datumu, klientu un summu: ${bad.file}`); return; }
+    const nums = new Set(S.invoices.map(i => i.number)); for (const r of list) { if (nums.has(r.number)) { toast("Numurs jau ir: " + r.number); return; } nums.add(r.number); }
+    const paid = $("#imp-paid").checked; $("#imp-go").disabled = true; let n = 0, bad2 = 0;
+    for (const r of list) {
+      const total = round2(amtNum(String(r.total).replace(/[^\d,.\-]/g, "")));
+      const cl = r.regNo && S.clients.find(c => (c.regNo || "").replace(/\D/g, "") === r.regNo.replace(/\D/g, ""));
+      const seller = { ...S.settings }; delete seller.example;
+      const inv = { id: uid(), number: r.number, autoNumber: false, date: r.date, due: r.due || addDays(r.date, S.settings.termDays), clientId: cl ? cl.id : "", status: paid ? "paid" : "issued",
+        buyer: { name: r.name, regNo: r.regNo, vatNo: "", address: r.address || "", email: "" }, seller, imported: true,
+        items: [{ desc: r.desc || "Pakalpojums", qty: 1, unit: "gab.", price: total, vat: 0 }], notes: "" };
+      try {
+        await store.put("invoices", inv); S.invoices.push(inv); n++;
+        if (store.mode === "server") await store.srv("acc/invoices/" + encodeURIComponent(inv.id), { method: "PUT", body: JSON.stringify({ meta: { number: inv.number, date: inv.date, client: r.name, total }, pdf: u8b64(new Uint8Array(r.buf)) }) });
+      } catch (e) { console.warn(e); bad2++; }
+      toast(`Importē ${n}/${list.length}…`);
+    }
+    closeImp(); render(); toast(bad2 ? `Importēti ${n}, ar kļūdām ${bad2}` : `Importēti ${n} rēķini`);
+  };
+}
+function closeImp() { const el = $("#imp"); if (el) el.remove(); }
+async function importPdfs(files) {
+  const rows = [];
+  for (const f of files) {
+    toast(`Nolasa ${rows.length + 1}/${files.length}: ${f.name}`);
+    try { rows.push(await enrichFromUr(await parseOldInvoice(f))); }
+    catch (e) { console.warn(e); rows.push({ file: f.name, buf: await f.arrayBuffer(), text: false, number: "", date: "", due: "", name: "", regNo: "", address: "", total: "", desc: "" }); }
+  }
+  impDialog(rows);
+}
+async function srvBlob(path) {
+  let t = ""; try { t = localStorage.getItem(store.tokenKey) || ""; } catch (e) {}
+  const r = await fetch("api/" + path, { headers: { Authorization: "Bearer " + t } }); if (!r.ok) throw new Error("Servera kļūda " + r.status); return new Uint8Array(await r.arrayBuffer());
+}
+
 /* ---------- rēķinu PDF grāmatvedim (tikai servera režīmā) ---------- */
 const u8b64 = u8 => { let s = ""; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); return btoa(s); };
 async function srvPdfSend(inv) {
@@ -567,7 +693,7 @@ async function srvPdfSend(inv) {
   await store.srv("acc/invoices/" + encodeURIComponent(inv.id), { method: "PUT", body: JSON.stringify({ meta, pdf: u8b64(await buildPdfBytes(inv)) }) });
 }
 async function srvPdfQuiet(inv) {
-  if (store.mode !== "server" || typeof PDFLib === "undefined" || typeof fontkit === "undefined") return;
+  if (inv.imported || store.mode !== "server" || typeof PDFLib === "undefined" || typeof fontkit === "undefined") return;
   try { await srvPdfSend(inv); } catch (e) { console.warn(e); toast("Rēķins saglabāts, bet PDF grāmatvedim nenosūtījās: " + e.message); }
 }
 async function srvPdfAll() {
@@ -625,7 +751,7 @@ function listView() {
   if (S.q) { const q = S.q.toLowerCase(); rows = rows.filter(i => (i.number + " " + (clientName(i))).toLowerCase().includes(q)); }
   return `<section class="view">
     ${setupBanner()}
-    <div class="row"><h2 style="font-size:20px">Rēķini</h2><span class="spacer"></span><button class="btn primary" data-act="new">+ Jauns rēķins</button></div>
+    <div class="row"><h2 style="font-size:20px">Rēķini</h2><span class="spacer"></span><button class="btn" data-act="imp">Augšupielādēt PDF</button><button class="btn primary" data-act="new">+ Jauns rēķins</button></div>
     <div class="summary">
       <div><span class="eyebrow">Neapmaksāti</span><b>${money(sum.open)} €</b></div>
       <div><span class="eyebrow">No tiem kavēti</span><b style="color:${sum.overdue ? "var(--bad)" : "inherit"}">${money(sum.overdue)} €</b></div>
@@ -762,6 +888,7 @@ document.addEventListener("click", async e => {
   const act = b.dataset.act; const inv = S.editing;
   if (act === "goto") { S.tab = b.dataset.tab; S.editing = null; render(); }
   else if (act === "zip") { b.disabled = true; const t = b.textContent; b.textContent = "Veido ZIP…"; await downloadZip($("#zip-p").value); b.disabled = false; b.textContent = t; }
+  else if (act === "imp") { let fi = $("#f-imp"); if (!fi) { fi = document.createElement("input"); fi.type = "file"; fi.id = "f-imp"; fi.accept = "application/pdf,.pdf"; fi.multiple = true; fi.hidden = true; document.body.appendChild(fi); fi.addEventListener("change", () => { const fl = [...fi.files]; fi.value = ""; if (fl.length) importPdfs(fl); }); } fi.click(); }
   else if (act === "new") { S.editing = newInvoice(); S.confirmDel = false; render(); }
   else if (act === "back") { S.editing = null; S.confirmDel = false; render(); }
   else if (act === "add-item") { inv.items.push({ desc: "", qty: 1, unit: "gab.", price: 0, vat: S.settings.defaultVat }); render(); $(`#it-desc-${inv.items.length - 1}`)?.focus(); }
