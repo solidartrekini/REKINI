@@ -38,3 +38,14 @@ iPhone šo funkciju neatbalsta, tur izmanto pogas lapā.
 - Bez atslēgas API neatbild ar datiem. Lapa pati ir publiska, bet tajā nav tavu datu.
 - Uzņēmumu reģistra dati (`ur-dati.bin`) tiek ielādēti būvēšanas laikā. Lai tos atjaunotu, palaid jaunu publicēšanu (Deployments → Retry).
 - Google Drive un paroles slēdzene šajā režīmā netiek izmantoti.
+
+## Grāmatveža piekļuve ("Grāmatvedei")
+
+Lapa `gramatvedis.html` (sākumlapā karte "Grāmatvedei") ļauj grāmatvedim apskatīt un lejupielādēt čekus, rēķinus (PDF, ZIP pa gadiem/mēnešiem) un augšupielādēt bankas izrakstu (konta pārskatu). Grāmatvedis neko nevar dzēst vai mainīt čekos un rēķinos.
+
+1. Cloudflare → Workers & Pages → `rekini` → Settings → Variables and Secrets → Add.
+2. Type: **Secret**, Name: `ACCOUNTANT_TOKEN`, Value: jauna garā parole (atšķirīga no `APP_TOKEN`). Deploy.
+3. Šo paroli dod grāmatvedim. Pirmoreiz atverot lapu, tā tiek pieprasīta un paturēta pārlūkā.
+4. Rēķinu rīkā: Mani rekvizīti → "Nosūtīt visus izrakstītos rēķinus grāmatvedim" (vienreiz; turpmāk jaunie rēķini tiek nosūtīti automātiski).
+
+Rēķinu rīkā cilne **Konta pārskats**: bankas izraksta (CSV vai camt.053 XML) ielāde, čeku saistīšana ar darījumiem, trūkstošo čeku filtrs, čeka pievienošana/meklēšana, čeku lejupielāde. Cilne "Rēķini" → "Augšupielādēt PDF" importē vecos rēķinus.
