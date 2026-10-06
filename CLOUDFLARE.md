@@ -22,6 +22,9 @@ Projekta (Worker) lapā: **Settings → Variables and Secrets → Add**
 ## 4. Pirmā ieeja
 Atver `https://rekini.<konts>.workers.dev`. Rīks palūgs piekļuves atslēgu: ievadi `APP_TOKEN` vērtību (pārlūks to atcerēsies). Ja šajā pārlūkā jau ir dati, rīks piedāvās tos pārcelt uz serveri.
 
+## Čeki
+Lapa `/cekus.html` ("Saglabāt čekus") ir atvērta bez paroles: čeku bildes un dati glabājas D1 datubāzē. Ja vēlies to aizsargāt, pievieno Secret `RECEIPTS_TOKEN` (tad lapa prasīs šo atslēgu; der arī `APP_TOKEN`).
+
 ## Piezīmes
 - Bez atslēgas API neatbild ar datiem. Lapa pati ir publiska, bet tajā nav tavu datu.
 - Uzņēmumu reģistra dati (`ur-dati.bin`) tiek ielādēti būvēšanas laikā. Lai tos atjaunotu, palaid jaunu publicēšanu (Deployments → Retry).

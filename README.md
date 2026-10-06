@@ -2,7 +2,7 @@
 
 Vienkāršs web rīks rēķinu izrakstīšanai: klienti, rēķina pozīcijas, PVN (vai "nav PVN maksātājs"), automātiska numerācija (`RR-2026-001`), summa vārdiem un PDF lejupielāde.
 
-Viss ir vienā failā `index.html`, bez būvēšanas soļa.
+Sākumlapa `index.html` ved uz `rekinu-riks.html` (rēķini) un `cekus.html` (čeku foto un dati). Katrs ir viens fails bez būvēšanas soļa.
 
 ## Lietošana
 
