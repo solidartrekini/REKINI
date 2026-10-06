@@ -216,6 +216,33 @@ function parseStatement(text, filename) {
 const S = { sort: { k: "date", d: 1 }, banks: [], receipts: [], invoices: [], month: "", showIn: true, onlyMiss: false, loaded: false };
 const txKeyBase = t => `${t.date}|${t.amount.toFixed(2)}|${norm(t.name + " " + t.desc).slice(0, 60)}`;
 function withIds(list) { const seen = {}; return list.map(t => { const b = txKeyBase(t); seen[b] = (seen[b] || 0) + 1; return { ...t, id: b + "|" + seen[b] }; }); }
+/* Dublikāti: tas pats maksājums no cita faila/formāta ar nabadzīgāku tekstu (bez apraksta vai bez nosaukuma).
+   Pāro "nabadzīgo" ierakstu ar "bagātāku" tā paša datuma un summas ierakstu; identiski ieraksti (divi vienādi pirkumi) netiek apvienoti. */
+function dedupeDoc(doc) {
+  const txs = doc.txs || [], info = t => norm((t.name || "") + " " + (t.desc || "")), richness = t => info(t).length;
+  const groups = {}; for (const t of txs) (groups[t.date + "|" + t.amount] ||= []).push(t);
+  const drop = new Map();
+  for (const g of Object.values(groups)) {
+    if (g.length < 2) continue;
+    const used = new Set(), poor = g.filter(t => !(t.desc || "").trim() || !(t.name || "").trim()).sort((a, c) => richness(c) - richness(a));
+    for (const p of poor) {
+      const pn = norm(p.name), pd = norm(p.desc);
+      let best = null;
+      for (const r of g) {
+        if (r === p || used.has(r.id) || drop.has(r.id) || richness(r) <= richness(p)) continue;
+        if (pn && norm(r.name) !== pn && !info(r).includes(pn)) continue;
+        if (pd && !info(r).includes(pd)) continue;
+        if (!best || (pn && norm(r.name) === pn && norm(best.name) !== pn) || (richness(r) > richness(best) && !(pn && norm(best.name) === pn))) best = r;
+      }
+      if (best) { used.add(best.id); drop.set(p.id, best.id); }
+    }
+  }
+  if (!drop.size) return 0;
+  doc.links = doc.links || {}; doc.ignore = doc.ignore || {}; doc.invLinks = doc.invLinks || {};
+  for (const [from, to] of drop) for (const k of ["links", "ignore", "invLinks"]) if (doc[k][from] != null) { if (doc[k][to] == null) doc[k][to] = doc[k][from]; delete doc[k][from]; }
+  doc.txs = txs.filter(t => !drop.has(t.id));
+  return drop.size;
+}
 async function saveStatement(list, filename, period) {
   const byM = {}; for (const t of withIds(list)) (byM[t.date.slice(0, 7)] ||= []).push(t);
   const months = Object.keys(byM).sort();
@@ -224,8 +251,10 @@ async function saveStatement(list, filename, period) {
     const have = new Map(old.txs.map(t => [t.id, t]));
     for (const t of byM[mk]) have.set(t.id, have.get(t.id) || t);
     const txs = [...have.values()].sort((a, b) => a.date.localeCompare(b.date));
+    const tmp = { txs, links: { ...(old.links || {}) }, ignore: { ...(old.ignore || {}) }, invLinks: { ...(old.invLinks || {}) } }; dedupeDoc(tmp);
+    txs.splice(0, txs.length, ...tmp.txs);
     const per = period || [list.map(t => t.date).sort()[0], list.map(t => t.date).sort().pop()];
-    const doc = { txs, links: old.links || {}, ignore: old.ignore || {}, file: filename, periods: [...(old.periods || []), per], updatedAt: Date.now() };
+    const doc = { txs, links: tmp.links, ignore: tmp.ignore, invLinks: tmp.invLinks, file: filename, periods: [...(old.periods || []), per], updatedAt: Date.now() };
     await srv("acc/bank/" + mk, { method: "PUT", body: JSON.stringify(doc) });
   }
   return months;
@@ -372,6 +401,7 @@ function render() {
 async function reload() {
   const [b, r, iv] = await Promise.all([srv("acc/bank").then(x => x.json()), srv("receipts").then(x => x.json()), srv("acc/invoices").then(x => x.json())]);
   S.banks = b; S.receipts = r; S.invoices = iv;
+  for (const bk of S.banks) { try { if (dedupeDoc(bk)) await persist(bk.id); } catch (e) { console.warn("dedupe", e); } }
   if (!S.banks.some(x => x.id === S.month)) S.month = S.banks.map(x => x.id).sort().pop() || "";
 }
 async function loadStatement(f) {
