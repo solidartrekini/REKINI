@@ -81,7 +81,7 @@ input[type=file] { display: none }
 <main class="wrap" id="app"></main>
 <div class="toast" id="toast" hidden role="status"></div>
 <input type="file" id="f-cam" accept="image/*" capture="environment">
-<input type="file" id="f-file" accept="image/*" multiple>
+<input type="file" id="f-file" accept="image/*,application/pdf,.pdf" multiple>
 <script>
 const $ = (s, el = document) => el.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -368,7 +368,7 @@ function listView() {
     <label class="f" style="max-width:260px">Autors<select id="f-author">${AUTHORS.map(a => `<option${getAuthor() === a ? " selected" : ""}>${a}</option>`).join("")}</select></label>
     <div class="row">
       <button class="btn big primary" data-act="cam">Uzņemt čeka foto</button>
-      <button class="btn big" data-act="file">Augšupielādēt bildi</button>
+      <button class="btn big" data-act="file">Augšupielādēt bildi vai PDF</button>
     </div>
     ${S.busy ? `<p class="hint">${esc(S.busy)}</p>` : ""}
     ${OCR.busy ? `<p class="hint">Atpazīst tekstu čekiem (${OCR.busy})… Pirmoreiz tiek ielādēti valodas dati, tas var aizņemt kādu brīdi.</p>` : ""}
@@ -399,7 +399,7 @@ function detailView() {
       <div class="photo"><img id="photo" alt="Čeka bilde" hidden><p class="hint" id="photo-note">Ielādē bildi…</p>
         ${pagesOf(r).length > 1 ? `<div class="row" style="justify-content:center">${pagesOf(r).map((pg, i) => `<button type="button" class="pg${i === S.page ? " on" : ""}" data-page="${i}" aria-label="Bilde ${i + 1}" style="background-image:url('${esc(pg.thumb || "")}')"></button>`).join("")}</div>` : ""}
         <div class="row" style="justify-content:center">
-          ${pagesOf(r).length < MAXP ? `<button class="btn" data-act="pcam">+ Foto</button><button class="btn" data-act="pfile">+ Fails</button>` : ""}
+          ${pagesOf(r).length < MAXP ? `<button class="btn" data-act="pcam">+ Foto</button><button class="btn" data-act="pfile">+ Fails / PDF</button>` : ""}
           ${pagesOf(r).length > 1 ? `<button class="btn danger" data-act="pdel">Dzēst šo bildi</button>` : ""}
         </div>
         <p class="hint">${pagesOf(r).length > 1 ? `Bilde ${S.page + 1} no ${pagesOf(r).length}.` : "Vienam čekam var pievienot vairākas bildes."}</p></div>
@@ -450,18 +450,46 @@ async function showPhoto() {
 }
 
 /* ---------- darbības ---------- */
+const isOk = f => f.type.startsWith("image/") || f.type === "application/pdf" || /\.(jpe?g|png|webp|heic|heif|pdf)$/i.test(f.name);
+const isPdf = f => f.type === "application/pdf" || /\.pdf$/i.test(f.name);
+const PDFJS = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/";
+async function prepPdf(file, maxPages) {
+  if (!window.pdfjsLib) { await loadScript(PDFJS + "pdf.min.js"); pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS + "pdf.worker.min.js"; }
+  const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
+  const items = [], texts = [];
+  for (let n = 1; n <= Math.min(pdf.numPages, maxPages); n++) {
+    const page = await pdf.getPage(n), vp0 = page.getViewport({ scale: 1 }), k = 1800 / Math.max(vp0.width, vp0.height), vp = page.getViewport({ scale: k });
+    const c = document.createElement("canvas"); c.width = Math.round(vp.width); c.height = Math.round(vp.height);
+    const x = c.getContext("2d"); x.fillStyle = "#fff"; x.fillRect(0, 0, c.width, c.height);
+    await page.render({ canvasContext: x, viewport: vp }).promise;
+    let big = await new Promise(r => c.toBlob(r, "image/jpeg", .82)); if (big.size > 1_300_000) big = await new Promise(r => c.toBlob(r, "image/jpeg", .65));
+    const th = await canvasBlob(c, 260, .7);
+    items.push({ big, thumb: "data:image/jpeg;base64," + await blobToB64(th) });
+    const tc = await page.getTextContent(), rows = new Map();
+    for (const it of tc.items) { if (!it.str || !it.str.trim()) continue; const y = Math.round(it.transform[5] / 3); (rows.get(y) || rows.set(y, []).get(y)).push([it.transform[4], it.str]); }
+    texts.push([...rows.entries()].sort((a, b) => b[0] - a[0]).map(([, r]) => r.sort((a, b) => a[0] - b[0]).map(v => v[1]).join(" ")).join("\n"));
+  }
+  const text = texts.join("\n\n").trim();
+  return { items, date: file.lastModified ? isoDate(new Date(file.lastModified)) : today(), text: text.replace(/\s/g, "").length > 20 ? text : "" };
+}
+async function prepFile(file, maxPages = MAXP) {
+  if (isPdf(file)) return prepPdf(file, maxPages);
+  const { big, thumb, date } = await prepImage(file); return { items: [{ big, thumb }], date, text: "" };
+}
 async function addFiles(files) {
-  files = [...files].filter(f => f.type.startsWith("image/") || /\.(jpe?g|png|webp|heic|heif)$/i.test(f.name));
-  if (!files.length) { toast("Izvēlies bildes failu"); return; }
+  files = [...files].filter(isOk);
+  if (!files.length) { toast("Izvēlies bildes vai PDF failu"); return; }
   let last = null, n = 0;
   for (const f of files) {
     S.busy = `Saglabā ${++n}/${files.length}…`; render();
     try {
-      const { big, thumb, date } = await prepImage(f);
-      const rec = { id: uid(), createdAt: Date.now(), date, author: getAuthor(), shop: {}, total: null, thumb, pages: [] };
-      rec.pages.push({ id: rec.id, thumb });
-      await store.putImg(rec.id, big); await store.put(rec);
-      S.list.push(rec); last = rec; ocrRun(rec, big);
+      const { items, date, text } = await prepFile(f);
+      const rec = { id: uid(), createdAt: Date.now(), date, author: getAuthor(), shop: {}, total: null, thumb: items[0].thumb, pages: [] };
+      for (const [i, it] of items.entries()) { const pid = i === 0 ? rec.id : uid(); rec.pages.push({ id: pid, thumb: it.thumb }); await store.putImg(pid, it.big); }
+      if (text) { rec.text = text; await autoFill(rec); }
+      await store.put(rec);
+      S.list.push(rec); last = rec;
+      if (!text) ocrRun(rec, items.map(i => i.big));
     } catch (e) { console.warn(e); toast("Neizdevās saglabāt: " + e.message); }
   }
   S.busy = "";
@@ -470,22 +498,25 @@ async function addFiles(files) {
 }
 async function addPages(files) {
   const r = S.cur; if (!r) return;
-  files = [...files].filter(f => f.type.startsWith("image/") || /\.(jpe?g|png|webp|heic|heif)$/i.test(f.name));
-  readForm(); const blobs = []; let n = 0;
+  files = [...files].filter(isOk);
+  readForm(); const blobs = []; let n = 0, text = "";
   for (const f of files) {
-    if (pagesOf(r).length >= MAXP) { toast("Vienam čekam var pievienot līdz " + MAXP + " bildēm"); break; }
-    toast(`Saglabā bildi ${++n}/${files.length}…`);
+    const room = MAXP - pagesOf(r).length;
+    if (room <= 0) { toast("Vienam čekam var pievienot līdz " + MAXP + " bildēm"); break; }
+    toast(`Saglabā ${++n}/${files.length}…`);
     try {
-      const { big, thumb } = await prepImage(f); const pid = uid();
-      await store.putImg(pid, big);
+      const res = await prepFile(f, room);
       if (!r.pages || !r.pages.length) r.pages = [{ id: r.id, thumb: r.thumb }];
-      r.pages.push({ id: pid, thumb }); blobs.push(big);
+      for (const it of res.items) { const pid = uid(); await store.putImg(pid, it.big); r.pages.push({ id: pid, thumb: it.thumb }); if (!res.text) blobs.push(it.big); }
+      if (res.text) text += (text ? "\n\n" : "") + res.text;
       await store.put(r);
     } catch (e) { console.warn(e); toast("Neizdevās saglabāt: " + e.message); }
   }
-  if (!blobs.length) return;
-  S.page = pagesOf(r).length - 1; render(); toast("Bilde pievienota");
-  ocrRun(r, blobs, true);
+  if (!blobs.length && !text) return;
+  S.page = pagesOf(r).length - 1;
+  if (text) { r.text = r.text ? r.text + "\n\n" + text : text; await autoFill(r); await store.put(r); }
+  render(); toast("Pievienots");
+  if (blobs.length) ocrRun(r, blobs, true);
 }
 function readForm() {
   const r = S.cur, num = id => { const v = $(id).value.trim().replace(",", "."); return v === "" ? null : Number(v); };
