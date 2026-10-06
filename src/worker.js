@@ -145,6 +145,7 @@ async function accountant(request, env, parts) {
   if (!admin && !acc) return J({ error: "Nepareiza atslēga" }, 401);
   if (!accTables) {
     for (const t of ["inv_meta", "inv_pdf", "bank"]) await env.DB.exec("CREATE TABLE IF NOT EXISTS " + t + " (id TEXT PRIMARY KEY, data TEXT NOT NULL)");
+    await env.DB.exec("CREATE TABLE IF NOT EXISTS bank_files (id TEXT PRIMARY KEY, data TEXT NOT NULL, meta TEXT NOT NULL DEFAULT '{}')");
     accTables = true;
   }
   const sub = parts[1], id = parts[2];
@@ -152,7 +153,7 @@ async function accountant(request, env, parts) {
     const { results } = await env.DB.prepare("SELECT id, data FROM inv_meta").all();
     return J(results.map(r => ({ ...JSON.parse(r.data), id: r.id })));
   }
-  if ((sub === "invoices" || sub === "bank") && (!id || !/^[\w.-]{3,64}$/.test(id)) && parts.length > 2) return J({ error: "Nederīgs id" }, 400);
+  if ((sub === "invoices" || sub === "bank" || sub === "bankfiles") && (!id || !/^[\w.-]{3,64}$/.test(id)) && parts.length > 2) return J({ error: "Nederīgs id" }, 400);
   if (sub === "invoices" && parts.length === 3) {
     if (m === "PUT") {
       if (!admin) return J({ error: "Tikai rēķinu rīks var pievienot rēķinus" }, 401);
@@ -174,6 +175,31 @@ async function accountant(request, env, parts) {
       const bin = atob(r.data), u8 = new Uint8Array(bin.length);
       for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
       return new Response(u8, { headers: { "Content-Type": "application/pdf", "Cache-Control": "private, max-age=600" } });
+    }
+  }
+  if (sub === "bankfiles") {
+    if (parts.length === 2 && m === "GET") {
+      const { results } = await env.DB.prepare("SELECT id, meta FROM bank_files").all();
+      return J(results.map(r => ({ ...JSON.parse(r.meta), id: r.id })));
+    }
+    if (parts.length === 3) {
+      if (m === "PUT") {
+        let b; try { b = JSON.parse(await request.text()); } catch (e) { return J({ error: "Nederīgs JSON" }, 400); }
+        if (!b || typeof b.file !== "string" || !B64.test(b.file) || b.file.length > 1_800_000) return J({ error: "Fails pārāk liels vai nederīgs" }, 413);
+        await env.DB.prepare("INSERT INTO bank_files (id, data, meta) VALUES (?1, ?2, ?3) ON CONFLICT(id) DO UPDATE SET data = ?2, meta = ?3").bind(id, b.file, JSON.stringify(b.meta || {})).run();
+        return J({ ok: true });
+      }
+      if (m === "DELETE") {
+        if (!admin) return J({ error: "Grāmatvedis nedrīkst dzēst" }, 403);
+        await env.DB.prepare("DELETE FROM bank_files WHERE id = ?1").bind(id).run(); return J({ ok: true });
+      }
+      if (m === "GET") {
+        const r = await env.DB.prepare("SELECT data FROM bank_files WHERE id = ?1").bind(id).first();
+        if (!r) return J({ error: "Nav atrasts" }, 404);
+        const bin = atob(r.data), u8 = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+        return new Response(u8, { headers: { "Content-Type": "application/octet-stream", "Cache-Control": "private, max-age=600" } });
+      }
     }
   }
   if (sub === "bank") {

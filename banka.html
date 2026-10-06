@@ -213,7 +213,7 @@ function parseStatement(text, filename) {
 }
 
 /* ---------- glabāšana: pa mēnešiem ---------- */
-const S = { sort: { k: "date", d: 1 }, banks: [], receipts: [], invoices: [], month: "", showIn: true, onlyMiss: false, loaded: false };
+const S = { files: [], sort: { k: "date", d: 1 }, banks: [], receipts: [], invoices: [], month: "", showIn: true, onlyMiss: false, loaded: false };
 const txKeyBase = t => `${t.date}|${t.amount.toFixed(2)}|${norm(t.name + " " + t.desc).slice(0, 60)}`;
 function withIds(list) { const seen = {}; return list.map(t => { const b = txKeyBase(t); seen[b] = (seen[b] || 0) + 1; return { ...t, id: b + "|" + seen[b] }; }); }
 /* Dublikāti: tas pats maksājums no cita faila/formāta ar nabadzīgāku tekstu (bez apraksta vai bez nosaukuma).
@@ -373,6 +373,12 @@ function coverage() {
   return { covered: m, gaps };
 }
 const fmtRange = (a, z) => a === z ? fmtDate(dstr(a)) : `${fmtDate(dstr(a))} – ${fmtDate(dstr(z))}`;
+function filesView() {
+  const fl = (S.files || []).slice().sort((a, c) => (c.uploadedAt || 0) - (a.uploadedAt || 0));
+  if (!fl.length) return "";
+  return `<div class="panel"><h2>Oriģinālie bankas izraksti</h2><p class="hint">Faili tādi, kādi tika ielādēti (bez izmaiņām).</p>
+    <div class="tablewrap"><table class="list" style="min-width:480px"><tbody>${fl.map(f => `<tr><td>${esc(f.name || "izraksts")}</td><td class="num">${(f.months || []).map(monthName).join(", ")}</td><td class="num">${f.uploadedAt ? new Date(f.uploadedAt).toLocaleDateString("lv-LV") : ""}</td><td class="r"><button class="btn sm" data-bf="${esc(f.id)}">Lejupielādēt oriģinālu</button></td></tr>`).join("")}</tbody></table></div></div>`;
+}
 function coverageView() {
   const { covered, gaps } = coverage();
   if (!covered.length) return "";
@@ -392,6 +398,7 @@ function render() {
       <p class="hint">Atbalstīti CSV (piem., Swedbank) un camt.053 XML faili. Ja failā ir vairāki mēneši, izraksts tiek sadalīts pa mēnešiem; atkārtoti ielādēti ieraksti netiek dubultoti.</p>
       <div class="row"><button class="btn primary" data-act="pick">Izvēlēties izraksta failu</button></div></div>
     ${coverageView()}
+    ${filesView()}
     ${months.length ? `<div class="row"><label class="row" style="gap:8px">Mēnesis <select id="m-sel">${months.map(m => `<option value="${m}"${m === S.month ? " selected" : ""}>${monthName(m)}</option>`).join("")}</select></label></div>${monthView()}`
       : `<div class="empty">Vēl nav ielādēts neviens bankas izraksts.</div>`}
   </section>`;
@@ -401,6 +408,7 @@ function render() {
 async function reload() {
   const [b, r, iv] = await Promise.all([srv("acc/bank").then(x => x.json()), srv("receipts").then(x => x.json()), srv("acc/invoices").then(x => x.json())]);
   S.banks = b; S.receipts = r; S.invoices = iv;
+  try { S.files = await srv("acc/bankfiles").then(x => x.ok ? x.json() : []); } catch (e) { S.files = []; }
   for (const bk of S.banks) { try { if (dedupeDoc(bk)) await persist(bk.id); } catch (e) { console.warn("dedupe", e); } }
   if (!S.banks.some(x => x.id === S.month)) S.month = S.banks.map(x => x.id).sort().pop() || "";
 }
@@ -410,6 +418,9 @@ async function loadStatement(f) {
     const list = parseStatement(await readFileText(f), f.name);
     if (!list.length) throw new Error("Failā netika atrasts neviens maksājums");
     const months = await saveStatement(list, f.name, list.period);
+    try { const id = "f" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+      await srv("acc/bankfiles/" + id, { method: "PUT", body: JSON.stringify({ meta: { name: f.name, size: f.size, uploadedAt: Date.now(), months, period: list.period || null }, file: await b64Blob(f) }) });
+    } catch (e) { toast("Izraksts ielādēts, bet oriģinālo failu saglabāt neizdevās: " + e.message); }
     await reload(); S.month = months[months.length - 1]; render();
     toast(`Ielādēti ${list.length} ieraksti (${months.map(monthName).join(", ")})`);
   } catch (err) { console.error(err); toast("Neizdevās: " + err.message); }
@@ -458,6 +469,7 @@ document.addEventListener("click", async e => {
   if (uni) { const bk = S.banks.find(x => x.id === S.month); if (bk) { delete (bk.invLinks || {})[uni.dataset.uninv]; try { await persist(S.month); render(); } catch (err) { toast("Neizdevās: " + err.message); } } return; }
   const dl = e.target.closest("[data-dl]"), ad = e.target.closest("[data-add]"), fi = e.target.closest("[data-find]"), fd = e.target.closest("[data-fd]");
   if (e.target.id === "fd") { $("#fd").remove(); return; }
+  const bf = e.target.closest("[data-bf]"); if (bf) { const f = S.files.find(x => x.id === bf.dataset.bf); try { saveBlob((f && f.name) || "izraksts", await (await srv("acc/bankfiles/" + bf.dataset.bf)).blob()); } catch (err) { toast("Neizdevās: " + err.message); } return; }
   const ft = e.target.closest("[data-findtx]"); if (ft) { findTxDialog(ft.dataset.findtx); return; }
   if (fd && $("#fd").dataset.kind === "tx") {
     const el = $("#fd"), rid = el.dataset.tx; el.remove();
