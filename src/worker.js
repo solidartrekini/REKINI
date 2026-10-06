@@ -10,7 +10,8 @@ async function eq(a, b) {
   return d === 0;
 }
 
-async function api(request, env, parts) {
+async function api(request, env0, parts) {
+  const env = { ...env0, APP_TOKEN: env0.APP_TOKEN || env0.app_token, DB: env0.DB || env0.db };
   const m = request.method;
   if (parts[0] === "ping") return J({ ok: true, configured: !!(env.DB && env.APP_TOKEN), db: !!env.DB, token: !!env.APP_TOKEN });
   if (!env.DB) return J({ error: "D1 datubāze nav piesaistīta (binding DB)" }, 500);
