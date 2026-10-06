@@ -437,7 +437,7 @@ function applyToForm(rec) {
 /* ---------- stāvoklis un skati ---------- */
 const MAXP = 8;
 const pagesOf = r => r.pages && r.pages.length ? r.pages : [{ id: r.id, thumb: r.thumb }];
-const S = { sort: { k: "date", d: -1 }, fa: "", page: 0, adding: false, list: [], loaded: false, cur: null, month: "all", q: "", confirmDel: false, busy: "" };
+const S = { sort: { k: "date", d: -1 }, fa: "", fd: "", page: 0, adding: false, list: [], loaded: false, cur: null, month: "all", q: "", confirmDel: false, busy: "" };
 function monthKey(r) { return (r.date || "").slice(0, 7); }
 
 function dupGroups() {
@@ -456,6 +456,8 @@ function listView() {
   { const { k, d } = S.sort, num = k === "total" || k === "vat", val = r => k === "shop" ? (r.shop && r.shop.name || "") : k === "reg" ? (r.shop && r.shop.regNo || "") : k === "date" ? (r.date || "") : num ? (r[k] === "" || r[k] == null ? -Infinity : Number(r[k])) : (r[k] || "");
     rows.sort((a, b) => { const x = val(a), y = val(b); const c = num ? (x === y ? 0 : x < y ? -1 : 1) : String(x).localeCompare(String(y), "lv"); return (c || (a.createdAt || 0) - (b.createdAt || 0)) * d; }); }
   const th = (k, label, cls = "") => `<th data-sort="${k}"${cls ? ` class="${cls}${S.sort.k === k ? " on" : ""}"` : S.sort.k === k ? ' class="on"' : ""} tabindex="0" aria-sort="${S.sort.k === k ? (S.sort.d > 0 ? "ascending" : "descending") : "none"}">${label}${S.sort.k === k ? (S.sort.d > 0 ? " ▲" : " ▼") : ""}</th>`;
+  if (S.fd === "empty") rows = rows.filter(r => !(r.shop && r.shop.name) || !r.date || r.total == null || r.total === "");
+  if (S.fd === "auto") rows = rows.filter(r => r.auto && r.auto.length);
   if (S.q) { const q = S.q.toLowerCase(); rows = rows.filter(r => ((r.shop && r.shop.name || "") + " " + (r.author || "") + " " + (r.note || "") + " " + (r.text || "")).toLowerCase().includes(q)); }
   const sum = rows.reduce((a, r) => a + (Number(r.total) || 0), 0), vat = rows.reduce((a, r) => a + (Number(r.vat) || 0), 0);
   return `<section class="view">
@@ -476,6 +478,7 @@ function listView() {
     ${ADMIN ? `<div class="filters">
       <select id="f-month" aria-label="Mēnesis"><option value="all">Visi mēneši</option>${months.map(m => `<option value="${m}"${S.month === m ? " selected" : ""}>${m.slice(0, 4)}. ${MONTHS[Number(m.slice(5)) - 1]}</option>`).join("")}</select>
       <select id="f-fa" aria-label="Filtrs pēc autora"><option value="">Visi autori</option>${AUTHORS.map(a => `<option${S.fa === a ? " selected" : ""}>${a}</option>`).join("")}</select>
+      <select id="f-fd" aria-label="Datu filtrs"><option value="">Visi čeki</option><option value="empty"${S.fd === "empty" ? " selected" : ""}>Bez datiem (trūkst veikals, datums vai summa)</option><option value="auto"${S.fd === "auto" ? " selected" : ""}>Automātiski aizpildītie</option></select>
       <input type="text" id="f-q" placeholder="Meklēt pēc veikala, piezīmes vai teksta" value="${esc(S.q)}">
     </div>` : ""}
     ${ADMIN && S.list.length ? `<div class="filters"><select id="zip-p" aria-label="Periods ZIP arhīvam"><option value="all">Visi čeki</option>${zipPeriods().years.map(y => `<option value="${y}">Gads ${y}</option>`).join("")}${zipPeriods().months.map(m => `<option value="${m}">${m.slice(0, 4)}. ${MONTHS[Number(m.slice(5)) - 1]}</option>`).join("")}</select><button class="btn" data-act="zip">Lejupielādēt ZIP</button></div>
@@ -777,7 +780,7 @@ dropZone((fl, e) => {
 });
 $("#f-zip").addEventListener("change", e => { const f = e.target.files && e.target.files[0]; e.target.value = ""; if (f && ADMIN) importZip(f); });
 for (const id of ["#f-cam", "#f-file"]) $(id).addEventListener("change", e => { const fs = e.target.files; if (fs && fs.length) { if (S.adding && S.cur) addPages(fs); else addFiles(fs); } S.adding = false; e.target.value = ""; });
-document.addEventListener("change", e => { if (e.target.id === "f-author") { try { localStorage.setItem("rr-author", e.target.value); } catch (x) {} return; } if (e.target.id === "f-fa") { S.fa = e.target.value; render(); return; } if (e.target.id === "f-month") { S.month = e.target.value; render(); } });
+document.addEventListener("change", e => { if (e.target.id === "f-author") { try { localStorage.setItem("rr-author", e.target.value); } catch (x) {} return; } if (e.target.id === "f-fa") { S.fa = e.target.value; render(); return; } if (e.target.id === "f-fd") { S.fd = e.target.value; render(); return; } if (e.target.id === "f-month") { S.month = e.target.value; render(); } });
 document.addEventListener("input", e => {
   if (e.target.id === "f-q") { S.q = e.target.value; clearTimeout(S.qt); S.qt = setTimeout(() => { render(); const q = $("#f-q"); q.focus(); q.setSelectionRange(q.value.length, q.value.length); }, 250); }
   if (e.target.id === "ur-q") { clearTimeout(urSearch.t); const v = e.target.value; urSearch.t = setTimeout(() => urSearch(v), 200); }
