@@ -215,8 +215,10 @@ function ocrRun(rec, blobs, append) {
       for (const blob of blobs) { const { data } = await w.recognize(blob); parts.push((data.text || "").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim()); }
       const text = append && rec.text ? rec.text + "\n\n" + parts.join("\n\n") : parts.join("\n\n");
       rec.text = text.trim(); rec.ocrAt = Date.now();
+      const tt = $("#r-total"); if (S.cur && S.cur.id === rec.id) { if (tt && tt.value) rec.total = Number(tt.value.replace(",", ".")) || rec.total; }
+      await autoFill(rec);
       await store.put(rec);
-      if (S.cur && S.cur.id === rec.id) { const t = $("#r-text"); if (t) t.value = rec.text; }
+      if (S.cur && S.cur.id === rec.id) { const t = $("#r-text"); if (t) t.value = rec.text; applyToForm(rec); }
     } catch (e) { console.warn("OCR", e); toast("Teksta atpazīšana neizdevās: " + e.message); }
     finally { OCR.busy--; ocrUi(); }
   });
@@ -277,6 +279,76 @@ async function downloadZip(period) {
     document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 2000);
     toast(`ZIP gatavs: ${list.length} čeki`);
   } catch (e) { console.error(e); toast("ZIP neizdevās izveidot: " + e.message); }
+}
+
+/* ---------- automātiska datu noteikšana no atpazītā teksta ---------- */
+const AMT = /(?<![\d.,])(\d{1,3}(?:[ \u00a0]\d{3})+|\d+)[.,](\d{2})(?![\d])(?!\s*%)/g;
+const amounts = line => [...line.matchAll(AMT)].map(m => Number(m[1].replace(/[ \u00a0]/g, "") + "." + m[2]));
+function parseTotal(lines) {
+  const BAD = /pvn|atlaid|discount|atgrie|naud|skaidr|cash|saņemts|sanemts|izdots|change|atlikum|nodok|tax|piegāde|pieg\./i;
+  const T1 = /apmaksai|samaksai|maksājam|maksajam|kopsumma|total|amount\s*due|to\s*pay/i, T2 = /(?<!\p{L})kop[aā](?!\p{L})|summa|(?<!\p{L})sum(?!\p{L})/iu;
+  const pick = re => { const c = []; for (const l of lines) if (re.test(l) && !BAD.test(l)) { const a = amounts(l); if (a.length) c.push(a[a.length - 1]); } return c.length ? Math.max(...c) : null; };
+  let t = pick(T1); if (t == null) t = pick(T2);
+  if (t == null) { const cnt = new Map(); for (const l of lines) if (!BAD.test(l)) for (const a of amounts(l)) cnt.set(a, (cnt.get(a) || 0) + 1); let best = null; for (const [a, c] of cnt) if (!best || c > best.c || (c === best.c && a > best.a)) best = { a, c }; t = best && best.c > 1 ? best.a : null; }
+  return t;
+}
+function parseVat(lines, total) {
+  if (!total) return null;
+  const exp = [21, 12, 5].map(r => Math.round(total * r / (100 + r) * 100) / 100);
+  for (const l of lines) if (/pvn|vat/i.test(l) && !/bez\s*pvn/i.test(l)) for (const a of amounts(l)) if (a < total && exp.some(e => Math.abs(e - a) <= 0.02)) return a;
+  return null;
+}
+function parseDate(lines) {
+  const ok = (d, m, y) => { if (y < 100) y += 2000; const dt = new Date(y, m - 1, d); return dt.getFullYear() === y && dt.getMonth() === m - 1 && dt.getDate() === d && y >= 2000 && dt <= new Date(Date.now() + 864e5 * 2) ? `${y}-${pad(m)}-${pad(d)}` : null; };
+  const found = [];
+  for (const l of lines) {
+    for (const m of l.matchAll(/(?<!\d)(\d{1,2})\s*[./-]\s*(\d{1,2})\s*[./-]\s*(\d{4}|\d{2})(?!\d)/g)) { const v = ok(+m[1], +m[2], +m[3]); if (v) found.push({ v, k: /dat|date|laiks|time/i.test(l) }); }
+    for (const m of l.matchAll(/(?<!\d)(\d{4})\s*[./-]\s*(\d{1,2})\s*[./-]\s*(\d{1,2})(?!\d)/g)) { const v = ok(+m[3], +m[2], +m[1]); if (v) found.push({ v, k: /dat|date|laiks|time/i.test(l) }); }
+  }
+  return (found.find(f => f.k) || found[0] || {}).v || null;
+}
+function parseShop(lines) {
+  let regNo = "";
+  for (const l of lines) { const m = /re[gģ][^\d\n]{0,14}(\d{11})(?!\d)/i.exec(l) || /(?<![\d])([45]\d{10})(?!\d)/.exec(l); if (m) { regNo = m[1]; break; } }
+  if (!regNo) for (const l of lines) { const m = /\bLV\s?(\d{11})(?!\d)/i.exec(l); if (m) { regNo = m[1]; break; } }
+  let name = "";
+  for (const l of lines.slice(0, 14)) { if (/\b(SIA|AS|A\/S|IK|Z\/S|KS)\b|["„“«]/i.test(l) && /\p{L}{3}/u.test(l)) { name = l.replace(/^[^\p{L}"„“«]+|[^\p{L}\p{N}"”“».)]+$/gu, "").trim(); break; } }
+  if (!name) name = (lines.slice(0, 5).find(l => (l.match(/\p{L}/gu) || []).length >= 4) || "").replace(/^[^\p{L}]+|[^\p{L}\p{N}.)]+$/gu, "").trim();
+  return { regNo, name };
+}
+function parseReceipt(text) {
+  const lines = (text || "").split(/\n/).map(l => l.trim()).filter(Boolean);
+  const total = parseTotal(lines);
+  return { total, vat: parseVat(lines, total), date: parseDate(lines), ...parseShop(lines) };
+}
+async function lookupShop(info) {
+  await urLoad(); if (UR.state !== "ready") return null;
+  if (info.regNo) { const r = UR.rows.find(x => x[0] === info.regNo); return r ? { regNo: r[0], name: r[1], address: r[2] || "" } : null; }
+  const nq = norm(info.name || "").split(/\s+/).filter(w => w.length > 1 && !/^(sia|as|ik)$/.test(w)); if (!nq.length) return null;
+  const hits = []; for (let i = 0; i < UR.rows.length && hits.length < 3; i++) if (nq.every(w => UR.keys[i].includes(w))) hits.push(UR.rows[i]);
+  return hits.length === 1 ? { regNo: hits[0][0], name: hits[0][1], address: hits[0][2] || "" } : null;
+}
+/* aizpilda tikai tukšos vērtības; datumu aizstāj tikai, ja tas nav ievadīts pašrocīgi */
+async function autoFill(rec) {
+  const info = parseReceipt(rec.text); if (!info.total && !info.date && !info.name && !info.regNo) return [];
+  const got = [];
+  rec.shop = rec.shop || {};
+  if (info.total && (rec.total == null || rec.total === "")) { rec.total = info.total; got.push("summa"); }
+  if (info.vat && (rec.vat == null || rec.vat === "")) { rec.vat = info.vat; got.push("PVN"); }
+  if (info.date && rec.dateSrc !== "manual" && info.date !== rec.date) { rec.date = info.date; rec.dateSrc = "ocr"; got.push("datums"); }
+  if (!rec.shop.name || !rec.shop.regNo) {
+    let hit = null; try { hit = await lookupShop(info); } catch (e) {}
+    if (hit) { if (!rec.shop.name) rec.shop.name = hit.name; if (!rec.shop.regNo) rec.shop.regNo = hit.regNo; if (!rec.shop.address) rec.shop.address = hit.address; got.push("veikals (reģistrs)"); }
+    else { if (!rec.shop.name && info.name) { rec.shop.name = info.name; got.push("veikals"); } if (!rec.shop.regNo && info.regNo) rec.shop.regNo = info.regNo; }
+  }
+  rec.auto = got; return got;
+}
+function applyToForm(rec) {
+  if (!S.cur || S.cur.id !== rec.id) return;
+  const set = (id, v, force) => { const el = $(id); if (el && v != null && v !== "" && (force || !el.value)) el.value = v; };
+  set("#r-total", rec.total); set("#r-vat", rec.vat); set("#r-name", (rec.shop || {}).name); set("#r-regNo", (rec.shop || {}).regNo); set("#r-address", (rec.shop || {}).address);
+  if (rec.dateSrc === "ocr") set("#r-date", rec.date, true);
+  const h = $("#auto-note"); if (h) h.textContent = rec.auto && rec.auto.length ? "Automātiski noteikts: " + rec.auto.join(", ") + ". Pārbaudi un labo, ja vajag." : "";
 }
 
 /* ---------- stāvoklis un skati ---------- */
@@ -352,6 +424,8 @@ function detailView() {
         </div>
         <label class="f">Piezīmes<textarea id="r-note">${esc(r.note)}</textarea></label>
         <label class="f"><span class="row" style="justify-content:space-between">Atpazītais teksts<button type="button" class="btn" data-act="ocr" style="padding:2px 10px"${OCR.busy ? " disabled" : ""}>Atpazīt no jauna</button></span><textarea id="r-text" rows="8" style="font:13px/1.4 var(--f-mono)">${esc(r.text)}</textarea></label>
+        <p class="hint" id="auto-note">${r.auto && r.auto.length ? "Automātiski noteikts: " + esc(r.auto.join(", ")) + ". Pārbaudi un labo, ja vajag." : ""}</p>
+        <div class="row"><button type="button" class="btn" data-act="auto">Aizpildīt tukšos laukus no teksta</button></div>
         <p class="hint">Veikala dati tiek saglabāti tikai pie šī čeka, nevis klientu sarakstā.</p>
       </div>
     </div>
@@ -415,7 +489,7 @@ async function addPages(files) {
 }
 function readForm() {
   const r = S.cur, num = id => { const v = $(id).value.trim().replace(",", "."); return v === "" ? null : Number(v); };
-  r.author = $("#r-author").value; r.date = $("#r-date").value || r.date; r.total = num("#r-total"); r.vat = num("#r-vat"); r.pay = $("#r-pay").value; r.note = $("#r-note").value.trim(); r.text = $("#r-text").value;
+  r.author = $("#r-author").value; { const nd = $("#r-date").value; if (nd && nd !== r.date) r.dateSrc = "manual"; r.date = nd || r.date; } r.total = num("#r-total"); r.vat = num("#r-vat"); r.pay = $("#r-pay").value; r.note = $("#r-note").value.trim(); r.text = $("#r-text").value;
   r.shop = { name: $("#r-name").value.trim(), regNo: $("#r-regNo").value.trim(), vatNo: $("#r-vatNo").value.trim(), address: $("#r-address").value.trim() };
 }
 document.addEventListener("click", async e => {
@@ -453,6 +527,7 @@ document.addEventListener("click", async e => {
     const a = document.createElement("a"); a.href = URL.createObjectURL(S.photoBlob); a.download = `Ceks_${S.cur.date || "bez-datuma"}_${S.cur.id}_${S.page + 1}.jpg`; document.body.appendChild(a); a.click();
     setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
   }
+  else if (act === "auto") { readForm(); b.disabled = true; const g = await autoFill(S.cur); b.disabled = false; applyToForm(S.cur); toast(g.length ? "Aizpildīts: " + g.join(", ") : "No teksta neko jaunu noteikt neizdevās"); }
   else if (act === "ocr") {
     readForm(); const r = S.cur;
     try { const blobs = []; for (const pg of pagesOf(r)) { const bl = await store.getImg(pg.id); if (bl) blobs.push(bl); } if (blobs.length) ocrRun(r, blobs, false); }
