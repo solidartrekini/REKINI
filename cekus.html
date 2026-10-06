@@ -92,6 +92,8 @@ const isoDate = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDat
 const today = () => isoDate(new Date());
 const fmtDate = s => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s || ""); return m ? `${m[3]}.${m[2]}.${m[1]}` : "—"; };
 const MONTHS = ["janvāris", "februāris", "marts", "aprīlis", "maijs", "jūnijs", "jūlijs", "augusts", "septembris", "oktobris", "novembris", "decembris"];
+const AUTHORS = ["Haralds", "Raimonds"];
+const getAuthor = () => { try { const a = localStorage.getItem("rr-author"); if (AUTHORS.includes(a)) return a; } catch (e) {} return AUTHORS[0]; };
 const PAY = ["Karte", "Skaidra nauda", "Pārskaitījums", "Cits"];
 function toast(msg) { const t = $("#toast"); t.textContent = msg; t.hidden = false; clearTimeout(toast.h); toast.h = setTimeout(() => t.hidden = true, 3000); }
 
@@ -223,16 +225,18 @@ function ocrRun(rec, blobs, append) {
 /* ---------- stāvoklis un skati ---------- */
 const MAXP = 8;
 const pagesOf = r => r.pages && r.pages.length ? r.pages : [{ id: r.id, thumb: r.thumb }];
-const S = { page: 0, adding: false, list: [], loaded: false, cur: null, month: "all", q: "", confirmDel: false, busy: "" };
+const S = { fa: "", page: 0, adding: false, list: [], loaded: false, cur: null, month: "all", q: "", confirmDel: false, busy: "" };
 function monthKey(r) { return (r.date || "").slice(0, 7); }
 
 function listView() {
   let rows = S.list.slice().sort((a, b) => (b.date || "").localeCompare(a.date || "") || (b.createdAt || 0) - (a.createdAt || 0));
   const months = [...new Set(rows.map(monthKey).filter(Boolean))].sort().reverse();
   if (S.month !== "all") rows = rows.filter(r => monthKey(r) === S.month);
-  if (S.q) { const q = S.q.toLowerCase(); rows = rows.filter(r => ((r.shop && r.shop.name || "") + " " + (r.note || "") + " " + (r.text || "")).toLowerCase().includes(q)); }
+  if (S.fa) rows = rows.filter(r => r.author === S.fa);
+  if (S.q) { const q = S.q.toLowerCase(); rows = rows.filter(r => ((r.shop && r.shop.name || "") + " " + (r.author || "") + " " + (r.note || "") + " " + (r.text || "")).toLowerCase().includes(q)); }
   const sum = rows.reduce((a, r) => a + (Number(r.total) || 0), 0), vat = rows.reduce((a, r) => a + (Number(r.vat) || 0), 0);
   return `<section class="view">
+    <label class="f" style="max-width:260px">Autors<select id="f-author">${AUTHORS.map(a => `<option${getAuthor() === a ? " selected" : ""}>${a}</option>`).join("")}</select></label>
     <div class="row">
       <button class="btn big primary" data-act="cam">Uzņemt čeka foto</button>
       <button class="btn big" data-act="file">Augšupielādēt bildi</button>
@@ -246,9 +250,10 @@ function listView() {
     </div>
     <div class="filters">
       <select id="f-month" aria-label="Mēnesis"><option value="all">Visi mēneši</option>${months.map(m => `<option value="${m}"${S.month === m ? " selected" : ""}>${m.slice(0, 4)}. ${MONTHS[Number(m.slice(5)) - 1]}</option>`).join("")}</select>
+      <select id="f-fa" aria-label="Filtrs pēc autora"><option value="">Visi autori</option>${AUTHORS.map(a => `<option${S.fa === a ? " selected" : ""}>${a}</option>`).join("")}</select>
       <input type="text" id="f-q" placeholder="Meklēt pēc veikala, piezīmes vai teksta" value="${esc(S.q)}">
     </div>
-    ${rows.length ? `<div class="cards">${rows.map(r => `<button class="card" data-open="${r.id}"><div class="th" style="background-image:url('${esc(r.thumb || "")}')"></div><div class="meta"><b>${esc(r.shop && r.shop.name || "Bez veikala")}</b><small class="num">${fmtDate(r.date)}</small>${r.total ? `<span class="num">${money(r.total)} €</span>` : `<span class="miss">bez summas</span>`}</div></button>`).join("")}</div>`
+    ${rows.length ? `<div class="cards">${rows.map(r => `<button class="card" data-open="${r.id}"><div class="th" style="background-image:url('${esc(r.thumb || "")}')"></div><div class="meta"><b>${esc(r.shop && r.shop.name || "Bez veikala")}</b><small class="num">${fmtDate(r.date)}${r.author ? " · " + esc(r.author) : ""}</small>${r.total ? `<span class="num">${money(r.total)} €</span>` : `<span class="miss">bez summas</span>`}</div></button>`).join("")}</div>`
       : `<div class="empty">${S.list.length ? "Neviens čeks neatbilst filtram." : "Vēl nav neviena čeka. Uzņem foto vai augšupielādē bildi."}</div>`}
   </section>`;
 }
@@ -270,6 +275,7 @@ function detailView() {
         <p class="hint">${pagesOf(r).length > 1 ? `Bilde ${S.page + 1} no ${pagesOf(r).length}.` : "Vienam čekam var pievienot vairākas bildes."}</p></div>
       <div class="panel">
         <div class="grid">
+          <label class="f">Autors<select id="r-author">${AUTHORS.map(a => `<option${r.author === a ? " selected" : ""}>${a}</option>`).join("")}${r.author && !AUTHORS.includes(r.author) ? `<option selected>${esc(r.author)}</option>` : ""}${r.author ? "" : `<option value="" selected></option>`}</select></label>
           <label class="f">Datums<input type="date" id="r-date" value="${esc(r.date || "")}"></label>
           <label class="f">Summa, EUR<input type="number" id="r-total" step="0.01" inputmode="decimal" value="${r.total ?? ""}"></label>
           <label class="f">No tās PVN, EUR (nav obligāti)<input type="number" id="r-vat" step="0.01" inputmode="decimal" value="${r.vat ?? ""}"></label>
@@ -320,7 +326,7 @@ async function addFiles(files) {
     S.busy = `Saglabā ${++n}/${files.length}…`; render();
     try {
       const { big, thumb, date } = await prepImage(f);
-      const rec = { id: uid(), createdAt: Date.now(), date, shop: {}, total: null, thumb, pages: [] };
+      const rec = { id: uid(), createdAt: Date.now(), date, author: getAuthor(), shop: {}, total: null, thumb, pages: [] };
       rec.pages.push({ id: rec.id, thumb });
       await store.putImg(rec.id, big); await store.put(rec);
       S.list.push(rec); last = rec; ocrRun(rec, big);
@@ -351,7 +357,7 @@ async function addPages(files) {
 }
 function readForm() {
   const r = S.cur, num = id => { const v = $(id).value.trim().replace(",", "."); return v === "" ? null : Number(v); };
-  r.date = $("#r-date").value || r.date; r.total = num("#r-total"); r.vat = num("#r-vat"); r.pay = $("#r-pay").value; r.note = $("#r-note").value.trim(); r.text = $("#r-text").value;
+  r.author = $("#r-author").value; r.date = $("#r-date").value || r.date; r.total = num("#r-total"); r.vat = num("#r-vat"); r.pay = $("#r-pay").value; r.note = $("#r-note").value.trim(); r.text = $("#r-text").value;
   r.shop = { name: $("#r-name").value.trim(), regNo: $("#r-regNo").value.trim(), vatNo: $("#r-vatNo").value.trim(), address: $("#r-address").value.trim() };
 }
 document.addEventListener("click", async e => {
@@ -400,7 +406,7 @@ document.addEventListener("click", async e => {
   }
 });
 for (const id of ["#f-cam", "#f-file"]) $(id).addEventListener("change", e => { const fs = e.target.files; if (fs && fs.length) { if (S.adding && S.cur) addPages(fs); else addFiles(fs); } S.adding = false; e.target.value = ""; });
-document.addEventListener("change", e => { if (e.target.id === "f-month") { S.month = e.target.value; render(); } });
+document.addEventListener("change", e => { if (e.target.id === "f-author") { try { localStorage.setItem("rr-author", e.target.value); } catch (x) {} return; } if (e.target.id === "f-fa") { S.fa = e.target.value; render(); return; } if (e.target.id === "f-month") { S.month = e.target.value; render(); } });
 document.addEventListener("input", e => {
   if (e.target.id === "f-q") { S.q = e.target.value; clearTimeout(S.qt); S.qt = setTimeout(() => { render(); const q = $("#f-q"); q.focus(); q.setSelectionRange(q.value.length, q.value.length); }, 250); }
   if (e.target.id === "ur-q") { clearTimeout(urSearch.t); const v = e.target.value; urSearch.t = setTimeout(() => urSearch(v), 200); }
