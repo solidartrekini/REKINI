@@ -54,6 +54,7 @@ tr.miss td:first-child { box-shadow: inset 4px 0 0 var(--bad) } tr.has td:first-
 #fd .it { display: flex; gap: 10px; align-items: center; padding: 6px; border: 1px solid var(--line); border-radius: 6px; cursor: pointer; text-align: left; background: var(--surface-2); width: 100% }
 #fd .it:hover { border-color: var(--accent) } #fd .it small { color: var(--muted); display: block }
 .acts { display: flex; gap: 6px; flex-wrap: wrap }
+th[data-sort] { cursor: pointer; user-select: none; white-space: nowrap } th[data-sort]:hover { color: var(--ink) } th[data-sort].on { color: var(--ink) }
 [hidden] { display: none !important }
 </style></head><body>
 <header class="bar"><div class="wrap"><a href="./">← Sākums</a><h1>Konta pārskats</h1></div></header>
@@ -174,7 +175,7 @@ function parseStatement(text, filename) {
 }
 
 /* ---------- glabāšana: pa mēnešiem ---------- */
-const S = { banks: [], receipts: [], month: "", showIn: false, onlyMiss: false, loaded: false };
+const S = { sort: { k: "date", d: 1 }, banks: [], receipts: [], month: "", showIn: false, onlyMiss: false, loaded: false };
 const txKeyBase = t => `${t.date}|${t.amount.toFixed(2)}|${norm(t.name + " " + t.desc).slice(0, 60)}`;
 function withIds(list) { const seen = {}; return list.map(t => { const b = txKeyBase(t); seen[b] = (seen[b] || 0) + 1; return { ...t, id: b + "|" + seen[b] }; }); }
 async function saveStatement(list, filename) {
@@ -226,6 +227,9 @@ function monthView() {
   const ign = t => !!(b.ignore || {})[t.id];
   const have = outs.filter(t => res.has(t.id)).length, skip = outs.filter(t => !res.has(t.id) && ign(t)).length, miss = outs.length - have - skip;
   let rows = b.txs.filter(t => S.showIn || t.amount < 0);
+  { const { k, d } = S.sort, val = t => k === "amount" ? t.amount : k === "name" ? norm(t.name) : k === "st" ? (t.amount >= 0 ? 3 : res.has(t.id) ? 2 : ign(t) ? 1 : 0) : t.date;
+    rows = rows.slice().sort((a, c) => { const x = val(a), y = val(c); return ((x < y ? -1 : x > y ? 1 : 0) || a.date.localeCompare(c.date)) * d; }); }
+  const th = (k, label, cls = "") => `<th data-sort="${k}" class="${cls}${S.sort.k === k ? " on" : ""}" tabindex="0">${label}${S.sort.k === k ? (S.sort.d > 0 ? " ▲" : " ▼") : ""}</th>`;
   if (S.onlyMiss) rows = rows.filter(t => t.amount < 0 && !res.has(t.id) && !ign(t));
   const rcMonth = S.receipts.filter(r => (r.date || "").slice(0, 7) === S.month && !used.has(r.id)).sort((x, y) => (x.date || "").localeCompare(y.date || ""));
   return `<div class="summary">
@@ -243,7 +247,7 @@ function monthView() {
       <button class="btn" data-act="zip"${have ? "" : " disabled"}>Lejupielādēt čekus (ZIP)</button>
       <button class="btn danger" data-act="del-month">Dzēst šo izrakstu</button>
     </div>
-    ${rows.length ? `<div class="tablewrap"><table class="list"><thead><tr><th>Datums</th><th>Saņēmējs / apraksts</th><th class="r">Summa, EUR</th><th>Čeks</th><th></th></tr></thead><tbody>
+    ${rows.length ? `<div class="tablewrap"><table class="list"><thead><tr>${th("date", "Datums")}${th("name", "Saņēmējs / apraksts")}${th("amount", "Summa, EUR", "r")}${th("st", "Čeks")}<th></th></tr></thead><tbody>
     ${rows.map(t => {
       const m = res.get(t.id), r = m && recById.get(m.rid), out = t.amount < 0, sk = out && !m && ign(t);
       let cell = "";
@@ -263,7 +267,7 @@ function monthView() {
 function render() {
   const app = $("#app");
   if (!S.loaded) { app.innerHTML = `<section class="view"><p class="hint">Ielādē…</p></section>`; return; }
-  const months = S.banks.map(b => b.id).sort().reverse();
+  const months = S.banks.map(b => b.id).sort();
   app.innerHTML = `<section class="view">
     <div class="panel"><h2>Augšupielādēt bankas izrakstu</h2>
       <p class="hint">Atbalstīti CSV (piem., Swedbank) un camt.053 XML faili. Ja failā ir vairāki mēneši, izraksts tiek sadalīts pa mēnešiem; atkārtoti ielādēti ieraksti netiek dubultoti.</p>
@@ -277,7 +281,7 @@ function render() {
 async function reload() {
   const [b, r] = await Promise.all([srv("acc/bank").then(x => x.json()), srv("receipts").then(x => x.json())]);
   S.banks = b; S.receipts = r;
-  if (!S.banks.some(x => x.id === S.month)) S.month = S.banks.map(x => x.id).sort().reverse()[0] || "";
+  if (!S.banks.some(x => x.id === S.month)) S.month = S.banks.map(x => x.id).sort().pop() || "";
 }
 $("#f-bank").addEventListener("change", async e => {
   const f = e.target.files && e.target.files[0]; e.target.value = ""; if (!f) return;
@@ -321,6 +325,7 @@ async function preview(id) {
 }
 document.addEventListener("click", async e => {
   if (e.target.id === "lb" || e.target.closest("[data-lb]")) { closeLb(); return; }
+  const so = e.target.closest("th[data-sort]"); if (so) { const k = so.dataset.sort; S.sort = { k, d: S.sort.k === k ? -S.sort.d : 1 }; render(); return; }
   const pv = e.target.closest("[data-prev]"); if (pv) { preview(pv.dataset.prev); return; }
   const b = S.banks.find(x => x.id === S.month);
   const dl = e.target.closest("[data-dl]"), ad = e.target.closest("[data-add]"), fi = e.target.closest("[data-find]"), fd = e.target.closest("[data-fd]");

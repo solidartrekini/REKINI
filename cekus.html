@@ -65,6 +65,7 @@ table.list tr:last-child td { border-bottom: 0 }
 table.list tbody tr { cursor: pointer }
 table.list tbody tr:hover { background: var(--surface-2) }
 table.list .r { text-align: right }
+th[data-sort] { cursor: pointer; user-select: none; white-space: nowrap } th[data-sort]:hover { color: var(--ink) } th[data-sort].on { color: var(--ink) }
 .tn { display: block; width: 44px; height: 58px; border: 1px solid var(--line); border-radius: 4px; background: var(--surface-2) center / cover no-repeat; padding: 0; cursor: zoom-in }
 .tn:hover { border-color: var(--accent) }
 .dupb2 { background: var(--bad); color: #fff; font-size: 11px; font-weight: 600; padding: 1px 8px; border-radius: 99px; white-space: nowrap }
@@ -290,7 +291,7 @@ const slug = t => (t || "bez-veikala").normalize("NFD").replace(/[\u0300-\u036f]
 function zipPeriods() {
   const ys = new Set(), ms = new Set();
   for (const r of S.list) if (r.date) { ys.add(r.date.slice(0, 4)); ms.add(r.date.slice(0, 7)); }
-  return { years: [...ys].sort().reverse(), months: [...ms].sort().reverse() };
+  return { years: [...ys].sort(), months: [...ms].sort() };
 }
 async function downloadZip(period) {
   const list = S.list.filter(r => (!S.fa || r.author === S.fa) && (period === "all" || (r.date || "").startsWith(period)))
@@ -424,7 +425,7 @@ function applyToForm(rec) {
 /* ---------- stāvoklis un skati ---------- */
 const MAXP = 8;
 const pagesOf = r => r.pages && r.pages.length ? r.pages : [{ id: r.id, thumb: r.thumb }];
-const S = { fa: "", page: 0, adding: false, list: [], loaded: false, cur: null, month: "all", q: "", confirmDel: false, busy: "" };
+const S = { sort: { k: "date", d: -1 }, fa: "", page: 0, adding: false, list: [], loaded: false, cur: null, month: "all", q: "", confirmDel: false, busy: "" };
 function monthKey(r) { return (r.date || "").slice(0, 7); }
 
 function dupGroups() {
@@ -437,9 +438,12 @@ function dupGroups() {
 function listView() {
   const dupIds = ADMIN ? dupGroups() : new Set();
   let rows = S.list.slice().sort((a, b) => (b.date || "").localeCompare(a.date || "") || (b.createdAt || 0) - (a.createdAt || 0));
-  const months = [...new Set(rows.map(monthKey).filter(Boolean))].sort().reverse();
+  const months = [...new Set(rows.map(monthKey).filter(Boolean))].sort();
   if (S.month !== "all") rows = rows.filter(r => monthKey(r) === S.month);
   if (S.fa) rows = rows.filter(r => r.author === S.fa);
+  { const { k, d } = S.sort, num = k === "total" || k === "vat", val = r => k === "shop" ? (r.shop && r.shop.name || "") : k === "reg" ? (r.shop && r.shop.regNo || "") : k === "date" ? (r.date || "") : num ? (r[k] === "" || r[k] == null ? -Infinity : Number(r[k])) : (r[k] || "");
+    rows.sort((a, b) => { const x = val(a), y = val(b); const c = num ? (x === y ? 0 : x < y ? -1 : 1) : String(x).localeCompare(String(y), "lv"); return (c || (a.createdAt || 0) - (b.createdAt || 0)) * d; }); }
+  const th = (k, label, cls = "") => `<th data-sort="${k}"${cls ? ` class="${cls}${S.sort.k === k ? " on" : ""}"` : S.sort.k === k ? ' class="on"' : ""} tabindex="0" aria-sort="${S.sort.k === k ? (S.sort.d > 0 ? "ascending" : "descending") : "none"}">${label}${S.sort.k === k ? (S.sort.d > 0 ? " ▲" : " ▼") : ""}</th>`;
   if (S.q) { const q = S.q.toLowerCase(); rows = rows.filter(r => ((r.shop && r.shop.name || "") + " " + (r.author || "") + " " + (r.note || "") + " " + (r.text || "")).toLowerCase().includes(q)); }
   const sum = rows.reduce((a, r) => a + (Number(r.total) || 0), 0), vat = rows.reduce((a, r) => a + (Number(r.vat) || 0), 0);
   return `<section class="view">
@@ -463,7 +467,7 @@ function listView() {
       <input type="text" id="f-q" placeholder="Meklēt pēc veikala, piezīmes vai teksta" value="${esc(S.q)}">
     </div>` : ""}
     ${ADMIN && S.list.length ? `<div class="filters"><select id="zip-p" aria-label="Periods ZIP arhīvam"><option value="all">Visi čeki</option>${zipPeriods().years.map(y => `<option value="${y}">Gads ${y}</option>`).join("")}${zipPeriods().months.map(m => `<option value="${m}">${m.slice(0, 4)}. ${MONTHS[Number(m.slice(5)) - 1]}</option>`).join("")}</select><button class="btn" data-act="zip">Lejupielādēt ZIP</button></div>` : ""}
-    ${rows.length && ADMIN ? `<div class="tablewrap"><table class="list"><thead><tr><th style="width:64px"></th><th>Datums</th><th>Autors</th><th>Piegādātājs</th><th>Reģ. nr.</th><th>Apmaksa</th><th class="r">PVN, EUR</th><th class="r">Summa, EUR</th></tr></thead><tbody>
+    ${rows.length && ADMIN ? `<div class="tablewrap"><table class="list"><thead><tr><th style="width:64px"></th>${th("date", "Datums")}${th("author", "Autors")}${th("shop", "Piegādātājs")}${th("reg", "Reģ. nr.")}${th("pay", "Apmaksa")}${th("vat", "PVN, EUR", "r")}${th("total", "Summa, EUR", "r")}</tr></thead><tbody>
       ${rows.map(r => { const sh = r.shop || {}; return `<tr data-open="${r.id}" tabindex="0"><td><button type="button" class="tn" data-prev="${r.id}" aria-label="Priekšskatīt čeku" style="background-image:url('${esc(r.thumb || "")}')"></button></td><td class="num">${fmtDate(r.date)}</td><td>${esc(r.author || "")}</td><td>${esc(sh.name || "—")}${dupIds.has(r.id) ? ` <span class="dupb2">Dublikāts?</span>` : ""}</td><td class="num">${esc(sh.regNo || "")}</td><td>${esc(r.pay || "")}</td><td class="r num">${r.vat ? money(r.vat) : ""}</td><td class="r num">${r.total != null && r.total !== "" ? money(r.total) : `<span class="miss">—</span>`}</td></tr>`; }).join("")}
       </tbody></table></div>`
     : rows.length ? `<div class="cards">${rows.map(r => `<button class="card" data-open="${r.id}">${dupIds.has(r.id) ? `<span class="dupb">Dublikāts?</span>` : ""}<div class="th" style="background-image:url('${esc(r.thumb || "")}')"></div><div class="meta"><b>${esc(r.shop && r.shop.name || "Bez veikala")}</b><small class="num">${fmtDate(r.date)}${r.author ? " · " + esc(r.author) : ""}</small>${r.total ? `<span class="num">${money(r.total)} €</span>` : `<span class="miss">bez summas</span>`}</div></button>`).join("")}</div>`
@@ -690,6 +694,7 @@ function readForm() {
 }
 document.addEventListener("click", async e => {
   const pgb = e.target.closest("[data-page]"); if (pgb) { readForm(); S.page = Number(pgb.dataset.page); render(); return; }
+  const so = e.target.closest("th[data-sort]"); if (so) { const k = so.dataset.sort; S.sort = { k, d: S.sort.k === k ? -S.sort.d : (k === "date" || k === "total" || k === "vat" ? -1 : 1) }; render(); return; }
   const o = e.target.closest("[data-open]"); if (o && ACC) { openPreview(o.dataset.open); return; } if (o) { S.cur = S.list.find(r => r.id === o.dataset.open); S.page = 0; S.confirmDel = false; render(); window.scrollTo(0, 0); return; }
   const b = e.target.closest("[data-act]"); if (!b) return;
   const act = b.dataset.act;

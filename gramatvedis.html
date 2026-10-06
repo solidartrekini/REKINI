@@ -25,6 +25,7 @@ select, input[type=text] { background: var(--surface); border: 1px solid var(--l
 .hint { color: var(--muted); font-size: 13px; margin: 0 }
 .tablewrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 8px }
 table.list { width: 100%; border-collapse: collapse; min-width: 640px }
+th[data-sort] { cursor: pointer; user-select: none; white-space: nowrap }
 table.list th { text-align: left; font: 500 11px var(--f-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); padding: 10px 12px; border-bottom: 1px solid var(--line) }
 table.list td { padding: 8px 12px; border-bottom: 1px solid var(--line) } table.list tr:last-child td { border-bottom: 0 } table.list .r { text-align: right }
 .empty { padding: 28px; text-align: center; color: var(--muted); background: var(--surface); border: 1px dashed var(--line); border-radius: 8px }
@@ -75,20 +76,21 @@ function makeZip(files) {
   return new Blob([...parts, ...cen, new Uint8Array(end.buffer)], { type: "application/zip" });
 }
 
-const S = { tab: "receipts", invoices: [], ok: false, period: "all", q: "" };
+const S = { sort: { k: "date", d: -1 }, tab: "receipts", invoices: [], ok: false, period: "all", q: "" };
 const fname = i => `Rekins_${String(i.number).replace(/[^\w.-]+/g, "_")}.pdf`;
 function save(name, blob) { const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000); }
-function periods() { const y = new Set(), m = new Set(); for (const i of S.invoices) if (i.date) { y.add(i.date.slice(0, 4)); m.add(i.date.slice(0, 7)); } return { years: [...y].sort().reverse(), months: [...m].sort().reverse() }; }
+function periods() { const y = new Set(), m = new Set(); for (const i of S.invoices) if (i.date) { y.add(i.date.slice(0, 4)); m.add(i.date.slice(0, 7)); } return { years: [...y].sort(), months: [...m].sort() }; }
 const inPeriod = i => S.period === "all" || (i.date || "").startsWith(S.period);
 function invoicesView() {
-  const rows = S.invoices.filter(i => inPeriod(i) && (!S.q || (i.number + " " + (i.client || "")).toLowerCase().includes(S.q.toLowerCase()))).sort((a, b) => (b.date || "").localeCompare(a.date || "") || String(b.number).localeCompare(String(a.number)));
+  const rows = S.invoices.filter(i => inPeriod(i) && (!S.q || (i.number + " " + (i.client || "")).toLowerCase().includes(S.q.toLowerCase()))).sort((a, b) => { const { k, d } = S.sort, v = i => k === "total" ? Number(i.total) || 0 : k === "client" ? (i.client || "") : k === "number" ? String(i.number) : (i.date || ""); const x = v(a), y = v(b); return ((typeof x === "number" ? x - y : String(x).localeCompare(String(y), "lv", { numeric: true })) || String(a.number).localeCompare(String(b.number), "lv", { numeric: true })) * d; });
+  const th = (k, label, cls = "") => `<th data-sort="${k}" class="${cls}" tabindex="0">${label}${S.sort.k === k ? (S.sort.d > 0 ? " ▲" : " ▼") : ""}</th>`;
   const p = periods(), sum = rows.reduce((a, i) => a + (Number(i.total) || 0), 0);
   return `<section class="view">
     <div class="row"><select id="inv-p" aria-label="Periods"><option value="all">Visi rēķini</option>${p.years.map(y => `<option value="${y}"${S.period === y ? " selected" : ""}>Gads ${y}</option>`).join("")}${p.months.map(m => `<option value="${m}"${S.period === m ? " selected" : ""}>${m.slice(0, 4)}. ${MONTHS[Number(m.slice(5)) - 1]}</option>`).join("")}</select>
       <input type="text" id="inv-q" placeholder="Meklēt pēc numura vai klienta" value="${esc(S.q)}">
       <button class="btn" data-act="zip"${rows.length ? "" : " disabled"}>Lejupielādēt ZIP</button></div>
     <div class="summary"><div><span class="hint">Rēķini</span><b>${rows.length}</b></div><div><span class="hint">Summa</span><b>${money(sum)} €</b></div></div>
-    ${rows.length ? `<div class="tablewrap"><table class="list"><thead><tr><th>Numurs</th><th>Klients</th><th>Datums</th><th class="r">Summa, EUR</th><th></th></tr></thead><tbody>
+    ${rows.length ? `<div class="tablewrap"><table class="list"><thead><tr>${th("number", "Numurs")}${th("client", "Klients")}${th("date", "Datums")}${th("total", "Summa, EUR", "r")}<th></th></tr></thead><tbody>
       ${rows.map(i => `<tr><td class="num">${esc(i.number)}</td><td>${esc(i.client || "—")}</td><td class="num">${fmtDate(i.date)}</td><td class="r num">${money(i.total)}</td><td class="r"><button class="btn sm" data-pdf="${esc(i.id)}">PDF</button></td></tr>`).join("")}
     </tbody></table></div>` : `<div class="empty">${S.invoices.length ? "Nekas neatbilst filtram." : "Vēl nav neviena izrakstīta rēķina grāmatvedim."}</div>`}
   </section>`;
@@ -103,6 +105,7 @@ function render() {
 }
 document.addEventListener("click", async e => {
   const tb = e.target.closest("nav button"); if (tb) { S.tab = tb.dataset.tab; render(); return; }
+  const so = e.target.closest("th[data-sort]"); if (so) { const k = so.dataset.sort; S.sort = { k, d: S.sort.k === k ? -S.sort.d : (k === "date" || k === "total" ? -1 : 1) }; render(); return; }
   const pd = e.target.closest("[data-pdf]");
   try {
     if (pd) { const i = S.invoices.find(x => x.id === pd.dataset.pdf); save(fname(i), await (await srv("acc/invoices/" + i.id)).blob()); return; }
