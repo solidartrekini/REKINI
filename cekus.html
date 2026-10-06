@@ -469,6 +469,8 @@ document.addEventListener("click", e => {
   await store.init();
   $("#store-note").textContent = store.mode === "server" ? "Čeki saglabājas serverī" : "Čeki saglabājas šajā pārlūkā";
   try { S.list = await store.list(); } catch (e) { toast("Neizdevās ielādēt čekus: " + e.message); S.list = []; }
-  S.loaded = true; render();
+  S.loaded = true;
+  const m = /[#&]open=([^&]+)/.exec(location.hash); if (m) { const r = S.list.find(x => x.id === decodeURIComponent(m[1])); if (r) { S.cur = r; S.page = 0; } }
+  render();
 })();
 </script></body></html>
