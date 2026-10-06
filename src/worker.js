@@ -124,6 +124,7 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (url.pathname.startsWith("/api/")) return api(request, env, url.pathname.slice(5).split("/").filter(Boolean).map(decodeURIComponent));
+    if (request.method === "POST" && url.pathname.endsWith("/cekus-share")) return Response.redirect(url.origin + "/cekus.html", 303);
     return env.ASSETS.fetch(request);
   }
 };

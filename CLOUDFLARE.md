@@ -27,6 +27,13 @@ Lapa `/cekus.html` ("Saglabāt čekus") ir atvērta bez paroles, bet tajā var t
 
 Ja vēlies aizsargāt arī čeku pievienošanu, pievieno Secret `RECEIPTS_TOKEN` (tad lapa prasīs šo atslēgu).
 
+## Čeku pievienošana no Android ("Share")
+1. Android tālrunī Chrome atver `https://rekini.solidartrekini.workers.dev/cekus.html`.
+2. Izvēlne (trīs punkti) → **Instalēt lietotni** (vai **Pievienot sākuma ekrānam**).
+3. Tagad jebkuram attēlam vai PDF failam spied **Kopīgot (Share)** un izvēlies **Čeki**. Čeks tiek saglabāts un atveras datu aizpildīšanai.
+
+iPhone šo funkciju neatbalsta, tur izmanto pogas lapā.
+
 ## Piezīmes
 - Bez atslēgas API neatbild ar datiem. Lapa pati ir publiska, bet tajā nav tavu datu.
 - Uzņēmumu reģistra dati (`ur-dati.bin`) tiek ielādēti būvēšanas laikā. Lai tos atjaunotu, palaid jaunu publicēšanu (Deployments → Retry).

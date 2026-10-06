@@ -2,6 +2,9 @@
 <html lang="lv"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Čeki</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#9e2a35">
+<link rel="icon" href="icon-192.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
@@ -650,7 +653,16 @@ if (window.top !== window.self) { const bar = $(".bar"); if (bar) bar.hidden = t
   $("#store-note").textContent = store.mode === "server" ? "Čeki saglabājas serverī" : "Čeki saglabājas šajā pārlūkā";
   if (ADMIN) try { S.list = await store.list(); } catch (e) { toast("Neizdevās ielādēt čekus: " + e.message); S.list = []; }
   S.loaded = true;
+  if (!ADMIN && "serviceWorker" in navigator && location.protocol.startsWith("http")) navigator.serviceWorker.register("sw.js").catch(() => {});
   const m = ADMIN && /[#&]open=([^&]+)/.exec(location.hash); if (m) { const r = S.list.find(x => x.id === decodeURIComponent(m[1])); if (r) { S.cur = r; S.page = 0; } }
   render();
+  if (!ADMIN && /[?&]shared=(\d+)/.test(location.search) && window.caches) {
+    try {
+      const c = await caches.open("rr-share"), files = [];
+      for (const k of await c.keys()) { const resp = await c.match(k); if (!resp) continue; const blob = await resp.blob(); files.push(new File([blob], decodeURIComponent(resp.headers.get("X-Name") || "fails"), { type: blob.type })); await c.delete(k); }
+      history.replaceState(null, "", location.pathname);
+      if (files.length) addFiles(files); else toast("Netika saņemts neviens fails");
+    } catch (e) { console.warn(e); }
+  }
 })();
 </script></body></html>
