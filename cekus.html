@@ -57,6 +57,24 @@ section.view { padding-top: 20px; display: grid; gap: 16px }
 .card:hover { border-color: var(--muted) }
 .card { position: relative }
 .dupb { position: absolute; top: 6px; left: 6px; z-index: 1; background: var(--bad); color: #fff; font-size: 11px; font-weight: 600; padding: 1px 8px; border-radius: 99px }
+.tablewrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 8px }
+table.list { width: 100%; border-collapse: collapse; min-width: 720px }
+table.list th { text-align: left; font: 500 11px var(--f-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); padding: 10px 12px; border-bottom: 1px solid var(--line) }
+table.list td { padding: 8px 12px; border-bottom: 1px solid var(--line); vertical-align: middle }
+table.list tr:last-child td { border-bottom: 0 }
+table.list tbody tr { cursor: pointer }
+table.list tbody tr:hover { background: var(--surface-2) }
+table.list .r { text-align: right }
+.tn { display: block; width: 44px; height: 58px; border: 1px solid var(--line); border-radius: 4px; background: var(--surface-2) center / cover no-repeat; padding: 0; cursor: zoom-in }
+.tn:hover { border-color: var(--accent) }
+.dupb2 { background: var(--bad); color: #fff; font-size: 11px; font-weight: 600; padding: 1px 8px; border-radius: 99px; white-space: nowrap }
+#lb { position: fixed; inset: 0; z-index: 40; background: rgb(0 0 0 / .78); display: grid; grid-template-rows: auto 1fr auto; gap: 8px; padding: 12px; justify-items: center }
+#lb .top { display: flex; gap: 8px; align-items: center; width: 100%; max-width: 900px; color: #fff }
+#lb .top .btn { color: #18201e; background: #fff }
+#lb .top .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+#lb .stage { min-height: 0; width: 100%; display: grid; place-items: center; overflow: auto }
+#lb img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 4px; background: #fff }
+#lb .strip { display: flex; gap: 8px }
 .card .th { aspect-ratio: 3/4; background: var(--surface-2) center / cover no-repeat }
 .card .meta { padding: 8px 10px; display: grid; gap: 1px; min-width: 0 }
 .card .meta b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
@@ -444,7 +462,10 @@ function listView() {
       <input type="text" id="f-q" placeholder="Meklēt pēc veikala, piezīmes vai teksta" value="${esc(S.q)}">
     </div>` : ""}
     ${ADMIN && S.list.length ? `<div class="filters"><select id="zip-p" aria-label="Periods ZIP arhīvam"><option value="all">Visi čeki</option>${zipPeriods().years.map(y => `<option value="${y}">Gads ${y}</option>`).join("")}${zipPeriods().months.map(m => `<option value="${m}">${m.slice(0, 4)}. ${MONTHS[Number(m.slice(5)) - 1]}</option>`).join("")}</select><button class="btn" data-act="zip">Lejupielādēt ZIP</button></div>` : ""}
-    ${rows.length ? `<div class="cards">${rows.map(r => `<button class="card" data-open="${r.id}">${dupIds.has(r.id) ? `<span class="dupb">Dublikāts?</span>` : ""}<div class="th" style="background-image:url('${esc(r.thumb || "")}')"></div><div class="meta"><b>${esc(r.shop && r.shop.name || "Bez veikala")}</b><small class="num">${fmtDate(r.date)}${r.author ? " · " + esc(r.author) : ""}</small>${r.total ? `<span class="num">${money(r.total)} €</span>` : `<span class="miss">bez summas</span>`}</div></button>`).join("")}</div>`
+    ${rows.length && ADMIN ? `<div class="tablewrap"><table class="list"><thead><tr><th style="width:64px"></th><th>Datums</th><th>Autors</th><th>Piegādātājs</th><th>Reģ. nr.</th><th>Apmaksa</th><th class="r">PVN, EUR</th><th class="r">Summa, EUR</th></tr></thead><tbody>
+      ${rows.map(r => { const sh = r.shop || {}; return `<tr data-open="${r.id}" tabindex="0"><td><button type="button" class="tn" data-prev="${r.id}" aria-label="Priekšskatīt čeku" style="background-image:url('${esc(r.thumb || "")}')"></button></td><td class="num">${fmtDate(r.date)}</td><td>${esc(r.author || "")}</td><td>${esc(sh.name || "—")}${dupIds.has(r.id) ? ` <span class="dupb2">Dublikāts?</span>` : ""}</td><td class="num">${esc(sh.regNo || "")}</td><td>${esc(r.pay || "")}</td><td class="r num">${r.vat ? money(r.vat) : ""}</td><td class="r num">${r.total != null && r.total !== "" ? money(r.total) : `<span class="miss">—</span>`}</td></tr>`; }).join("")}
+      </tbody></table></div>`
+    : rows.length ? `<div class="cards">${rows.map(r => `<button class="card" data-open="${r.id}">${dupIds.has(r.id) ? `<span class="dupb">Dublikāts?</span>` : ""}<div class="th" style="background-image:url('${esc(r.thumb || "")}')"></div><div class="meta"><b>${esc(r.shop && r.shop.name || "Bez veikala")}</b><small class="num">${fmtDate(r.date)}${r.author ? " · " + esc(r.author) : ""}</small>${r.total ? `<span class="num">${money(r.total)} €</span>` : `<span class="miss">bez summas</span>`}</div></button>`).join("")}</div>`
       : `<div class="empty">${S.list.length ? "Neviens čeks neatbilst filtram." : ADMIN ? "Vēl nav neviena čeka. Uzņem foto vai augšupielādē bildi." : "Šajā apmeklējumā vēl nav pievienotu čeku."}</div>`}
   </section>`;
 }
@@ -510,6 +531,33 @@ async function showPhoto() {
     const im = $("#photo"); im.src = S.photoUrl; im.hidden = false; $("#photo-note").hidden = true;
   } catch (e) { const n = $("#photo-note"); if (n) n.textContent = "Bildi neizdevās ielādēt: " + e.message; }
 }
+
+/* ---------- čeka priekšskatījums (lightbox) ---------- */
+const LB = { url: null, id: null, page: 0 };
+function closePreview() { const el = $("#lb"); if (el) el.remove(); if (LB.url) URL.revokeObjectURL(LB.url); LB.url = null; document.removeEventListener("keydown", lbKey); }
+function lbKey(e) { if (e.key === "Escape") closePreview(); }
+async function openPreview(id, page = 0) {
+  const r = S.list.find(x => x.id === id); if (!r) return;
+  LB.id = id; LB.page = page; const pgs = pagesOf(r), sh = r.shop || {};
+  let el = $("#lb"); if (!el) { el = document.createElement("div"); el.id = "lb"; el.setAttribute("role", "dialog"); el.setAttribute("aria-label", "Čeka priekšskatījums"); document.body.appendChild(el); document.addEventListener("keydown", lbKey); }
+  el.innerHTML = `<div class="top"><span class="t">${esc(sh.name || "Čeks")} · ${fmtDate(r.date)}${r.total != null && r.total !== "" ? " · " + money(r.total) + " €" : ""}</span><button class="btn" data-lb="open">Atvērt detaļas</button><button class="btn" data-lb="close" aria-label="Aizvērt">✕</button></div>
+    <div class="stage"><p class="hint" style="color:#fff">Ielādē…</p></div>
+    <div class="strip">${pgs.length > 1 ? pgs.map((pg, i) => `<button type="button" class="pg${i === page ? " on" : ""}" data-lbpage="${i}" aria-label="Bilde ${i + 1}" style="background-image:url('${esc(pg.thumb || "")}')"></button>`).join("") : ""}</div>`;
+  try {
+    const blob = await store.getImg(pgs[Math.min(page, pgs.length - 1)].id);
+    if (LB.id !== id || LB.page !== page || !$("#lb")) return;
+    if (LB.url) URL.revokeObjectURL(LB.url);
+    const stage = $("#lb .stage");
+    if (!blob) { stage.innerHTML = `<p class="hint" style="color:#fff">Bilde nav atrasta.</p>`; return; }
+    LB.url = URL.createObjectURL(blob); stage.innerHTML = `<img alt="Čeka bilde" src="${LB.url}">`;
+  } catch (e) { const st = $("#lb .stage"); if (st) st.innerHTML = `<p class="hint" style="color:#fff">Bildi neizdevās ielādēt: ${esc(e.message)}</p>`; }
+}
+document.addEventListener("click", e => {
+  const lb = e.target.closest("[data-lb]"); if (lb) { const id = LB.id; closePreview(); if (lb.dataset.lb === "open") { S.cur = S.list.find(r => r.id === id); S.page = 0; S.confirmDel = false; render(); window.scrollTo(0, 0); } return; }
+  const lp = e.target.closest("[data-lbpage]"); if (lp) { openPreview(LB.id, Number(lp.dataset.lbpage)); return; }
+  if (e.target.id === "lb") { closePreview(); return; }
+  const pv = e.target.closest("[data-prev]"); if (pv) { e.stopPropagation(); openPreview(pv.dataset.prev); }
+}, true);
 
 /* ---------- darbības ---------- */
 async function hashFile(file) {
