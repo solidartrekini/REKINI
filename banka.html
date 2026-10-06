@@ -284,7 +284,7 @@ function monthView() {
       const act = !out ? "" : r ? `<div class="acts"><button class="btn sm" data-dl="${r.id}" data-tx="${esc(t.id)}">Lejupielādēt čeku</button>${m.manual ? `<button class="btn sm" data-unlink="${esc(t.id)}">Atsaistīt</button>` : ""}</div>` :
         sk ? (t.kind ? "" : `<button class="btn sm" data-unignore="${esc(t.id)}">Atcelt</button>`) :
         `<div class="acts">${ACC ? "" : `<button class="btn sm primary" data-add="${esc(t.id)}">Pievienot čeku</button>`}<button class="btn sm" data-find="${esc(t.id)}">Meklēt čeku</button><button class="btn sm" data-ignore="${esc(t.id)}">Nav vajadzīgs</button></div>`;
-      return `<tr class="${!out ? "skip" : r ? "has" : sk ? "skip" : "miss"}"><td class="num">${fmtDate(t.date)}</td><td>${esc(t.name || "—")}<small style="display:block;color:var(--muted)">${esc(t.desc)}</small></td><td class="r num">${money(t.amount)}</td><td>${cell}</td><td>${act}</td></tr>`;
+      return `<tr data-tx="${esc(t.id)}" class="${!out ? "skip" : r ? "has" : sk ? "skip" : "miss"}"><td class="num">${fmtDate(t.date)}</td><td>${esc(t.name || "—")}<small style="display:block;color:var(--muted)">${esc(t.desc)}</small></td><td class="r num">${money(t.amount)}</td><td>${cell}</td><td>${act}</td></tr>`;
     }).join("")}
     </tbody></table></div>` : `<div class="empty">${S.onlyMiss ? "Visiem maksājumiem čeki ir piesaistīti." : "Šajā izrakstā nav ierakstu."}</div>`}
     ${rcMonth.length ? `<div class="panel"><h2>Čeki bez bankas maksājuma (${rcMonth.length})</h2><p class="hint">Šie čeki ar ${monthName(S.month)} datumu neatbilst nevienam izraksta maksājumam (piem., apmaksāti skaidrā naudā vai izraksts vēl nav ielādēts).</p>
@@ -334,8 +334,7 @@ async function reload() {
   S.banks = b; S.receipts = r;
   if (!S.banks.some(x => x.id === S.month)) S.month = S.banks.map(x => x.id).sort().pop() || "";
 }
-$("#f-bank").addEventListener("change", async e => {
-  const f = e.target.files && e.target.files[0]; e.target.value = ""; if (!f) return;
+async function loadStatement(f) {
   try {
     toast("Nolasa izrakstu…");
     const list = parseStatement(await readFileText(f), f.name);
@@ -344,7 +343,8 @@ $("#f-bank").addEventListener("change", async e => {
     await reload(); S.month = months[months.length - 1]; render();
     toast(`Ielādēti ${list.length} ieraksti (${months.map(monthName).join(", ")})`);
   } catch (err) { console.error(err); toast("Neizdevās: " + err.message); }
-});
+}
+$("#f-bank").addEventListener("change", e => { const f = e.target.files && e.target.files[0]; e.target.value = ""; if (f) loadStatement(f); });
 function csvReport() {
   const b = S.banks.find(x => x.id === S.month); if (!b) return;
   const { res } = matchAll(), recById = new Map(S.receipts.map(r => [r.id, r]));
@@ -403,6 +403,28 @@ document.addEventListener("click", async e => {
       await srv("acc/bank/" + S.month, { method: "DELETE" }); await reload(); render();
     }
   } catch (err) { toast("Neizdevās: " + err.message); }
+});
+
+/* ---------- drag & drop ---------- */
+function dropZone(onDrop) {
+  const ov = document.createElement("div"); ov.hidden = true;
+  ov.style.cssText = "position:fixed;inset:8px;z-index:90;border:3px dashed var(--accent);border-radius:12px;background:rgb(158 42 53 / .08);display:grid;place-items:center;font:600 20px var(--f-body);color:var(--accent);pointer-events:none";
+  ov.textContent = "Nomet failus šeit"; document.body.appendChild(ov);
+  const has = e => e.dataTransfer && [...(e.dataTransfer.types || [])].includes("Files"); let n = 0;
+  addEventListener("dragenter", e => { if (has(e)) { n++; ov.hidden = false; } });
+  addEventListener("dragleave", e => { if (has(e) && --n <= 0) { n = 0; ov.hidden = true; } });
+  addEventListener("dragover", e => { if (has(e)) e.preventDefault(); });
+  addEventListener("drop", e => { if (!has(e)) return; e.preventDefault(); n = 0; ov.hidden = true; const fl = [...e.dataTransfer.files]; if (fl.length) onDrop(fl, e); });
+}
+dropZone(async (fl, e) => {
+  const isRc = f => /^image\//.test(f.type) || /pdf/.test(f.type) || /\.(pdf|jpe?g|png|heic|webp)$/i.test(f.name);
+  const st = fl.find(f => /\.(csv|txt|xml)$/i.test(f.name) || /csv|xml|text\/plain/.test(f.type));
+  if (st) { loadStatement(st); return; }
+  const rc = fl.find(isRc); if (!rc) { toast("Vilkt var bankas izraksta CSV/XML vai čeka attēlu/PDF"); return; }
+  if (ACC) { toast("Grāmatvedis čekus pievienot nevar"); return; }
+  const tr = e.target.closest && e.target.closest("tr[data-tx]");
+  if (!tr) { toast("Nomet čeku uz darījuma rindas, kam trūkst čeka"); return; }
+  try { await addReceiptFor(tr.dataset.tx, rc); } catch (err) { console.error(err); toast("Neizdevās: " + err.message); }
 });
 $("#f-rc").addEventListener("change", async e => {
   const f = e.target.files && e.target.files[0]; e.target.value = ""; if (!f || !S.addTx) return;

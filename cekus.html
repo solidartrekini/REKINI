@@ -741,6 +741,26 @@ document.addEventListener("click", async e => {
     b.disabled = false;
   }
 });
+
+/* ---------- drag & drop ---------- */
+function dropZone(onDrop) {
+  const ov = document.createElement("div"); ov.hidden = true;
+  ov.style.cssText = "position:fixed;inset:8px;z-index:90;border:3px dashed var(--accent);border-radius:12px;background:rgb(158 42 53 / .08);display:grid;place-items:center;font:600 20px var(--f-body);color:var(--accent);pointer-events:none";
+  ov.textContent = "Nomet failus šeit"; document.body.appendChild(ov);
+  const has = e => e.dataTransfer && [...(e.dataTransfer.types || [])].includes("Files"); let n = 0;
+  addEventListener("dragenter", e => { if (has(e)) { n++; ov.hidden = false; } });
+  addEventListener("dragleave", e => { if (has(e) && --n <= 0) { n = 0; ov.hidden = true; } });
+  addEventListener("dragover", e => { if (has(e)) e.preventDefault(); });
+  addEventListener("drop", e => { if (!has(e)) return; e.preventDefault(); n = 0; ov.hidden = true; const fl = [...e.dataTransfer.files]; if (fl.length) onDrop(fl, e); });
+}
+dropZone((fl, e) => {
+  if (S.cur && !S.adding && !ACC && !$("#lb")) { /* atvērts čeks: pievieno lapas */ const im = fl.filter(f => /^image\/|pdf$/i.test(f.type) || /\.pdf$/i.test(f.name)); if (im.length) { addPages(im); return; } }
+  const zips = fl.filter(f => /\.zip$/i.test(f.name) || /zip/.test(f.type));
+  if (zips.length) { if (ADMIN && !ACC) importZip(zips[0]); else toast("ZIP var pievienot tikai rēķinu rīkā"); return; }
+  if (ACC) return;
+  const ok = fl.filter(f => /^image\//.test(f.type) || /pdf/.test(f.type) || /\.(pdf|jpe?g|png|heic|webp)$/i.test(f.name));
+  if (ok.length) addFiles(ok); else toast("Vilkt var attēlus, PDF vai ZIP");
+});
 $("#f-zip").addEventListener("change", e => { const f = e.target.files && e.target.files[0]; e.target.value = ""; if (f && ADMIN) importZip(f); });
 for (const id of ["#f-cam", "#f-file"]) $(id).addEventListener("change", e => { const fs = e.target.files; if (fs && fs.length) { if (S.adding && S.cur) addPages(fs); else addFiles(fs); } S.adding = false; e.target.value = ""; });
 document.addEventListener("change", e => { if (e.target.id === "f-author") { try { localStorage.setItem("rr-author", e.target.value); } catch (x) {} return; } if (e.target.id === "f-fa") { S.fa = e.target.value; render(); return; } if (e.target.id === "f-month") { S.month = e.target.value; render(); } });

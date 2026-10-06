@@ -565,6 +565,23 @@ document.addEventListener("click", e => {
   const so = e.target.closest("th[data-sort]"); if (!so || !so.closest("#app")) return;
   const k = so.dataset.sort; S.sort = { k, d: S.sort.k === k ? -S.sort.d : (k === "date" || k === "due" || k === "total" ? -1 : 1) }; render();
 });
+/* ---------- drag & drop: PDF rēķini uz rēķinu saraksta ---------- */
+(() => {
+  const has = e => e.dataTransfer && [...(e.dataTransfer.types || [])].includes("Files"); let n = 0;
+  const ov = document.createElement("div"); ov.hidden = true;
+  ov.style.cssText = "position:fixed;inset:8px;z-index:90;border:3px dashed var(--accent);border-radius:12px;background:rgb(158 42 53 / .08);display:grid;place-items:center;font:600 20px var(--f-body);color:var(--accent);pointer-events:none";
+  ov.textContent = "Nomet vecos rēķinu PDF šeit"; document.body.appendChild(ov);
+  const on = () => S.tab === "invoices" && !S.editing && S.loaded;
+  addEventListener("dragenter", e => { if (has(e) && on()) { n++; ov.hidden = false; } });
+  addEventListener("dragleave", e => { if (has(e) && --n <= 0) { n = 0; ov.hidden = true; } });
+  addEventListener("dragover", e => { if (has(e)) e.preventDefault(); });
+  addEventListener("drop", e => {
+    if (!has(e)) return; e.preventDefault(); n = 0; ov.hidden = true;
+    if (!on()) { toast("PDF var vilkt rēķinu sarakstā"); return; }
+    const fl = [...e.dataTransfer.files].filter(f => /pdf/.test(f.type) || /\.pdf$/i.test(f.name));
+    if (fl.length) importPdfs(fl); else toast("Šeit var vilkt tikai PDF rēķinus");
+  });
+})();
 /* ---------- veco rēķinu PDF imports ---------- */
 const PDFJS_URL = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/";
 function loadScriptOnce(src) { return new Promise((res, rej) => { const s = document.createElement("script"); s.src = src; s.onload = res; s.onerror = () => rej(new Error("Neizdevās ielādēt " + src)); document.head.appendChild(s); }); }
