@@ -123,8 +123,32 @@ const ALIAS = {
   desc: ["informacija sanemejam", "detalas", "description", "details", "paskaidrojums", "maksajuma merkis", "maksajuma detalas", "informacija", "purpose", "reference", "merkis"],
   type: ["ieraksta tips", "record type"], cur: ["valuta", "currency", "ccy"]
 };
+// Swedbank CSV bez virsrakstu rindas: konts;tips;datums;partneris | BIC | IBAN;detaļas;summa;valūta;D/K;atsauce;kods
+function fromSwedbankPlain(rows) {
+  const ok = r => r.length >= 8 && /^\d{2}$/.test(String(r[1]).trim()) && /^\d{1,2}[./-]\d{1,2}[./-]\d{4}$/.test(String(r[2]).trim());
+  if (!rows.slice(0, 3).some(ok)) return null;
+  const out = [], own = (S.settings && S.settings.regNo) || "40103952422";
+  for (const r of rows) {
+    if (!ok(r) || String(r[1]).trim() !== "20") continue;
+    const date = parseDate(r[2]); let amt = parseAmount(r[5]); if (!date || isNaN(amt)) continue;
+    amt = /^d/i.test(String(r[7]).trim()) ? -Math.abs(amt) : Math.abs(amt);
+    const party = String(r[3] || "").split("|").map(x => x.trim()), desc = String(r[4] || "").trim(), code = String(r[9] || "").trim();
+    let name = party[0] || "", pdate = "";
+    if (/^PIRKUMS\b/i.test(desc)) {
+      const pd = /(\d{2}\.\d{2}\.\d{4})\s+[\d.,]+\s*EUR/.exec(desc); if (pd) pdate = parseDate(pd[1]);
+      if (!name) { const m = /\)\s*(.+?)(?:\s+LV-\d{4}.*)?$/.exec(desc); if (m) name = m[1].trim(); }
+    }
+    const t = { date, amount: Math.round(amt * 100) / 100, name, desc, cur: String(r[6] || "").trim() };
+    if (pdate) t.pdate = pdate;
+    if (code === "KOM") t.kind = "Bankas komisija";
+    else if (party.includes(own) || /^\d{11}$/.test(party[1] || "") && party[1] === own) t.kind = "Pārvedums starp saviem kontiem";
+    out.push(t);
+  }
+  return out.length ? out : null;
+}
 function fromCsv(text) {
   const rows = splitCsv(text); if (rows.length < 2) throw new Error("Fails ir tukšs vai nav CSV");
+  const sw = fromSwedbankPlain(rows); if (sw) return sw;
   let hi = rows.findIndex(r => r.map(norm).some(x => ALIAS.date.includes(x)) && r.map(norm).some(x => [...ALIAS.amount, ...ALIAS.debit].includes(x)));
   if (hi < 0) throw new Error("Neatpazīju kolonnas. Atrastās kolonnas: " + rows[0].map(x => x.trim()).filter(Boolean).join(", "));
   const H = rows[hi].map(norm), col = k => { for (const a of ALIAS[k]) { const i = H.indexOf(a); if (i >= 0) return i; } return -1; };
@@ -203,13 +227,13 @@ function matchAll() {
   const all = S.banks.flatMap(b => b.txs.map(t => ({ t, b })));
   for (const { t, b } of all) { const rid = (b.links || {})[t.id]; if (rid && recById.has(rid)) { used.add(rid); res.set(t.id, { rid, manual: true }); } }
   const day = s => Date.parse(s + "T00:00:00Z") / 864e5;
-  const cand = all.filter(({ t, b }) => t.amount < 0 && !res.has(t.id) && !(b.ignore || {})[t.id]).sort((x, y) => x.t.date.localeCompare(y.t.date));
+  const cand = all.filter(({ t, b }) => t.amount < 0 && !res.has(t.id) && !t.kind && !(b.ignore || {})[t.id]).sort((x, y) => x.t.date.localeCompare(y.t.date));
   for (const { t } of cand) {
     let best = null, bs = 1e9;
     for (const r of S.receipts) {
       if (used.has(r.id) || r.total == null || r.total === "" || !r.date) continue;
       if (Math.abs(Number(r.total) - Math.abs(t.amount)) > 0.005) continue;
-      const dd = Math.abs(day(r.date) - day(t.date)); if (dd > 7) continue;
+      const dd = Math.min(Math.abs(day(r.date) - day(t.date)), t.pdate ? Math.abs(day(r.date) - day(t.pdate)) : 99); if (dd > 7) continue;
       const shop = norm(r.shop && r.shop.name).replace(/\b(sia|as|ik|zs|oy|ab)\b/g, "").trim(), hay = norm(t.name + " " + t.desc);
       const sc = dd - (shop.length > 2 && hay.includes(shop.split(" ")[0]) ? 0.5 : 0);
       if (sc < bs) { bs = sc; best = r; }
@@ -224,7 +248,7 @@ function monthView() {
   const b = S.banks.find(x => x.id === S.month); if (!b) return "";
   const { res, used } = matchAll(), recById = new Map(S.receipts.map(r => [r.id, r]));
   const outs = b.txs.filter(t => t.amount < 0), ins = b.txs.filter(t => t.amount >= 0);
-  const ign = t => !!(b.ignore || {})[t.id];
+  const ign = t => !!(b.ignore || {})[t.id] || !!t.kind;
   const have = outs.filter(t => res.has(t.id)).length, skip = outs.filter(t => !res.has(t.id) && ign(t)).length, miss = outs.length - have - skip;
   let rows = b.txs.filter(t => S.showIn || t.amount < 0);
   { const { k, d } = S.sort, val = t => k === "amount" ? t.amount : k === "name" ? norm(t.name) : k === "st" ? (t.amount >= 0 ? 3 : res.has(t.id) ? 2 : ign(t) ? 1 : 0) : t.date;
@@ -253,10 +277,10 @@ function monthView() {
       let cell = "";
       if (!out) cell = `<span class="pill skip">ienākošs</span>`;
       else if (r) cell = `<div class="cell"><button type="button" class="tn" data-prev="${r.id}" aria-label="Priekšskatīt čeku" style="background-image:url('${esc(r.thumb || "")}')"></button><div><span class="pill ok">Čeks ir</span>${m.manual ? ` <small>piesaistīts manuāli</small>` : ""}<small>${esc((r.shop && r.shop.name) || "Bez veikala")} · ${fmtDate(r.date)} · ${money(r.total)} €</small></div></div>`;
-      else if (sk) cell = `<span class="pill skip">Čeks nav vajadzīgs</span>`;
+      else if (sk) cell = `<span class="pill skip">${esc(t.kind || "Čeks nav vajadzīgs")}</span>`;
       else cell = `<span class="pill bad">Trūkst čeka</span>`;
       const act = !out ? "" : r ? `<div class="acts"><button class="btn sm" data-dl="${r.id}" data-tx="${esc(t.id)}">Lejupielādēt čeku</button>${m.manual ? `<button class="btn sm" data-unlink="${esc(t.id)}">Atsaistīt</button>` : ""}</div>` :
-        sk ? `<button class="btn sm" data-unignore="${esc(t.id)}">Atcelt</button>` :
+        sk ? (t.kind ? "" : `<button class="btn sm" data-unignore="${esc(t.id)}">Atcelt</button>`) :
         `<div class="acts">${ACC ? "" : `<button class="btn sm primary" data-add="${esc(t.id)}">Pievienot čeku</button>`}<button class="btn sm" data-find="${esc(t.id)}">Meklēt čeku</button><button class="btn sm" data-ignore="${esc(t.id)}">Nav vajadzīgs</button></div>`;
       return `<tr class="${!out ? "skip" : r ? "has" : sk ? "skip" : "miss"}"><td class="num">${fmtDate(t.date)}</td><td>${esc(t.name || "—")}<small style="display:block;color:var(--muted)">${esc(t.desc)}</small></td><td class="r num">${money(t.amount)}</td><td>${cell}</td><td>${act}</td></tr>`;
     }).join("")}
@@ -301,7 +325,7 @@ function csvReport() {
   const lines = [["Datums", "Saņēmējs", "Apraksts", "Summa", "Čeks", "Čeka veikals", "Čeka datums", "Čeka summa"].map(q).join(";")];
   for (const t of b.txs) {
     const m = res.get(t.id), r = m && recById.get(m.rid), out = t.amount < 0;
-    const st = !out ? "ienākošs" : r ? "ir" : (b.ignore || {})[t.id] ? "nav vajadzīgs" : "TRŪKST";
+    const st = !out ? "ienākošs" : r ? "ir" : t.kind || ((b.ignore || {})[t.id] ? "nav vajadzīgs" : "TRŪKST");
     lines.push([fmtDate(t.date), t.name, t.desc, String(t.amount).replace(".", ","), st, r && r.shop ? r.shop.name : "", r ? fmtDate(r.date) : "", r && r.total != null ? String(r.total).replace(".", ",") : ""].map(q).join(";"));
   }
   const blob = new Blob(["﻿" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
