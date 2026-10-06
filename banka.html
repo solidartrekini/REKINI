@@ -328,7 +328,7 @@ function monthView() {
     }).join("")}
     </tbody></table></div>` : `<div class="empty">${S.onlyMiss ? "Visiem darījumiem dokumenti ir piesaistīti." : "Šajā izrakstā nav ierakstu."}</div>`}
     ${rcMonth.length ? `<div class="panel"><h2>Čeki bez bankas maksājuma (${rcMonth.length})</h2><p class="hint">Šie čeki ar ${monthName(S.month)} datumu neatbilst nevienam izraksta maksājumam (piem., apmaksāti skaidrā naudā vai izraksts vēl nav ielādēts).</p>
-      <div class="tablewrap"><table class="list" style="min-width:520px"><tbody>${rcMonth.map(r => `<tr><td style="width:56px"><button type="button" class="tn" data-prev="${r.id}" style="background-image:url('${esc(r.thumb || "")}')" aria-label="Priekšskatīt čeku"></button></td><td class="num">${fmtDate(r.date)}</td><td>${esc((r.shop && r.shop.name) || "—")}</td><td>${esc(r.pay || "")}</td><td class="r num">${r.total != null && r.total !== "" ? money(r.total) : "—"}</td></tr>`).join("")}</tbody></table></div></div>` : ""}`;
+      <div class="tablewrap"><table class="list" style="min-width:520px"><tbody>${rcMonth.map(r => `<tr><td style="width:56px"><button type="button" class="tn" data-prev="${r.id}" style="background-image:url('${esc(r.thumb || "")}')" aria-label="Priekšskatīt čeku"></button></td><td class="num">${fmtDate(r.date)}</td><td>${esc((r.shop && r.shop.name) || "—")}</td><td>${esc(r.pay || "")}</td><td class="r num">${r.total != null && r.total !== "" ? money(r.total) : "—"}</td><td class="r"><button class="btn sm" data-findtx="${r.id}">Piesaistīt darījumam</button></td></tr>`).join("")}</tbody></table></div></div>` : ""}`;
 }
 const dnum = s => Math.round(Date.parse(s + "T00:00:00Z") / 864e5), dstr = n => new Date(n * 864e5).toISOString().slice(0, 10);
 function coverage() {
@@ -428,6 +428,12 @@ document.addEventListener("click", async e => {
   if (uni) { const bk = S.banks.find(x => x.id === S.month); if (bk) { delete (bk.invLinks || {})[uni.dataset.uninv]; try { await persist(S.month); render(); } catch (err) { toast("Neizdevās: " + err.message); } } return; }
   const dl = e.target.closest("[data-dl]"), ad = e.target.closest("[data-add]"), fi = e.target.closest("[data-find]"), fd = e.target.closest("[data-fd]");
   if (e.target.id === "fd") { $("#fd").remove(); return; }
+  const ft = e.target.closest("[data-findtx]"); if (ft) { findTxDialog(ft.dataset.findtx); return; }
+  if (fd && $("#fd").dataset.kind === "tx") {
+    const el = $("#fd"), rid = el.dataset.tx; el.remove();
+    if (fd.dataset.fd !== "x") { const bk = S.banks.find(x => x.txs.some(t => t.id === fd.dataset.fd)); if (bk) { bk.links = bk.links || {}; bk.links[fd.dataset.fd] = rid; try { await persist(bk.id); render(); toast("Čeks piesaistīts darījumam"); } catch (err) { toast("Neizdevās: " + err.message); } } }
+    return;
+  }
   if (fd) {
     const el = $("#fd"), txId = el.dataset.tx, isInv = el.dataset.kind === "inv"; el.remove();
     if (fd.dataset.fd !== "x") { const bk = S.banks.find(x => x.id === S.month); if (bk) { const key = isInv ? "invLinks" : "links"; bk[key] = bk[key] || {}; bk[key][txId] = fd.dataset.fd; try { await persist(S.month); render(); toast(isInv ? "Rēķins piesaistīts" : "Čeks piesaistīts"); } catch (err) { toast("Neizdevās: " + err.message); } } }
@@ -478,7 +484,7 @@ $("#f-rc").addEventListener("change", async e => {
   const f = e.target.files && e.target.files[0]; e.target.value = ""; if (!f || !S.addTx) return;
   try { await addReceiptFor(S.addTx, f); } catch (err) { console.error(err); toast("Neizdevās: " + err.message); }
 });
-document.addEventListener("input", e => { if (e.target.id === "fd-q") { const d = $("#fd"); (d.dataset.kind === "inv" ? findInvDialog : findDialog)(d.dataset.tx, e.target.value); } });
+document.addEventListener("input", e => { if (e.target.id === "fd-q") { const d = $("#fd"); (d.dataset.kind === "inv" ? findInvDialog : d.dataset.kind === "tx" ? findTxDialog : findDialog)(d.dataset.tx, e.target.value); } });
 $("#f-inv").addEventListener("change", async e => {
   const f = e.target.files && e.target.files[0]; e.target.value = ""; if (!f || !S.addTx) return;
   try { await addInvoiceFor(S.addTx, f); } catch (err) { console.error(err); toast("Neizdevās: " + err.message); }
@@ -575,6 +581,17 @@ async function addReceiptFor(txId, file) {
   S.receipts.push({ ...rec, id });
   b.links = b.links || {}; b.links[txId] = id; await persist(S.month);
   render(); toast("Čeks pievienots un piesaistīts darījumam");
+}
+function findTxDialog(rid, q = "") {
+  const r = S.receipts.find(x => x.id === rid); if (!r) return;
+  let el = $("#fd"); if (!el) { el = document.createElement("div"); el.id = "fd"; document.body.appendChild(el); }
+  el.dataset.tx = rid; el.dataset.kind = "tx"; const { res } = matchAll(), day = s => Date.parse((s || "1970-01-01") + "T00:00:00Z") / 864e5, ql = norm(q);
+  const list = S.banks.flatMap(b => b.txs.map(t => ({ t, b }))).filter(({ t, b }) => t.amount < 0 && !res.has(t.id) && !t.kind && !(b.ignore || {})[t.id] && (!ql || norm(t.name + " " + t.desc + " " + fmtDate(t.date) + " " + money(t.amount)).includes(ql)))
+    .map(({ t }) => ({ t, sc: (r.total !== "" && r.total != null && Math.abs(Number(r.total) - Math.abs(t.amount)) < .005 ? 0 : 1000) + Math.abs(day(r.date) - day(t.date)) })).sort((a, b) => a.sc - b.sc).slice(0, 40);
+  el.innerHTML = `<div class="box"><div class="row"><b style="flex:1">Piesaistīt čeku darījumam: ${esc((r.shop && r.shop.name) || "Bez veikala")} · ${fmtDate(r.date)} · ${r.total != null && r.total !== "" ? money(r.total) + " €" : "—"}</b><button class="btn sm" data-fd="x">✕</button></div>
+    <input type="text" id="fd-q" placeholder="Meklēt pēc saņēmēja, datuma vai summas" value="${esc(q)}">
+    ${list.length ? list.map(({ t }) => `<button class="it" data-fd="${esc(t.id)}"><span><b>${esc(t.name || "—")}</b> · <span class="num">${money(t.amount)} €</span><small>${fmtDate(t.date)} · ${esc(t.desc || "")}</small></span></button>`).join("") : `<p class="hint">Nav darījumu bez čeka.</p>`}</div>`;
+  const inp = $("#fd-q"); if (inp && q) { inp.focus(); inp.setSelectionRange(q.length, q.length); }
 }
 function findDialog(txId, q = "") {
   const b = S.banks.find(x => x.id === S.month), t = b && b.txs.find(x => x.id === txId); if (!t) return;
