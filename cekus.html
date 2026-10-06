@@ -61,6 +61,8 @@ section.view { padding-top: 20px; display: grid; gap: 16px }
 .detail { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; align-items: start }
 @media (max-width: 860px) { .detail { grid-template-columns: minmax(0, 1fr) } }
 .photo { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 10px; display: grid; gap: 8px; justify-items: center }
+.pg { width: 44px; height: 58px; border: 2px solid var(--line); border-radius: 4px; background: var(--surface-2) center / cover; cursor: pointer; padding: 0 }
+.pg.on { border-color: var(--accent) }
 .photo img { max-width: 100%; max-height: 80vh; border-radius: 4px; display: block }
 .ur { display: grid; gap: 6px; background: var(--surface-2); border-radius: var(--r); padding: 12px }
 .ur-out { display: grid; gap: 2px }
@@ -137,9 +139,13 @@ const store = {
     if (this.mode === "server") return (await this.srv(`receipts/${id}/img`)).blob();
     const db = await this.idb(); return this.req(db.transaction("i").objectStore("i").get(id));
   },
-  async del(id) {
+  async delImg(id) {
+    if (this.mode === "server") await this.srv(`receipts/${id}/img`, { method: "DELETE" });
+    else { const db = await this.idb(); await this.req(db.transaction("i", "readwrite").objectStore("i").delete(id)); }
+  },
+  async del(id, imgIds) {
     if (this.mode === "server") await this.srv("receipts/" + id, { method: "DELETE" });
-    else { const db = await this.idb(); const t = db.transaction(["r", "i"], "readwrite"); t.objectStore("r").delete(id); t.objectStore("i").delete(id); await new Promise(r => t.oncomplete = r); }
+    else { const db = await this.idb(); const t = db.transaction(["r", "i"], "readwrite"); t.objectStore("r").delete(id); for (const i of new Set([id, ...(imgIds || [])])) t.objectStore("i").delete(i); await new Promise(r => t.oncomplete = r); }
   }
 };
 function blobToB64(blob) { return new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(String(fr.result).split(",")[1]); fr.onerror = () => rej(fr.error); fr.readAsDataURL(blob); }); }
@@ -198,23 +204,26 @@ async function ocrWorker() {
   return OCR.worker;
 }
 function ocrUi() { if (!S.cur) render(); else { const b = $("[data-act=ocr]"); if (b) b.disabled = OCR.busy > 0; } }
-function ocrRun(rec, blob) {
+function ocrRun(rec, blobs, append) {
+  if (!Array.isArray(blobs)) blobs = [blobs];
   OCR.busy++; ocrUi();
   OCR.queue = OCR.queue.then(async () => {
     try {
-      const w = await ocrWorker();
-      const { data } = await w.recognize(blob);
-      const text = (data.text || "").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
-      rec.text = text; rec.ocrAt = Date.now();
+      const w = await ocrWorker(), parts = [];
+      for (const blob of blobs) { const { data } = await w.recognize(blob); parts.push((data.text || "").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim()); }
+      const text = append && rec.text ? rec.text + "\n\n" + parts.join("\n\n") : parts.join("\n\n");
+      rec.text = text.trim(); rec.ocrAt = Date.now();
       await store.put(rec);
-      if (S.cur && S.cur.id === rec.id) { const t = $("#r-text"); if (t) t.value = text; }
+      if (S.cur && S.cur.id === rec.id) { const t = $("#r-text"); if (t) t.value = rec.text; }
     } catch (e) { console.warn("OCR", e); toast("Teksta atpazīšana neizdevās: " + e.message); }
     finally { OCR.busy--; ocrUi(); }
   });
 }
 
 /* ---------- stāvoklis un skati ---------- */
-const S = { list: [], loaded: false, cur: null, month: "all", q: "", confirmDel: false, busy: "" };
+const MAXP = 8;
+const pagesOf = r => r.pages && r.pages.length ? r.pages : [{ id: r.id, thumb: r.thumb }];
+const S = { page: 0, adding: false, list: [], loaded: false, cur: null, month: "all", q: "", confirmDel: false, busy: "" };
 function monthKey(r) { return (r.date || "").slice(0, 7); }
 
 function listView() {
@@ -252,7 +261,13 @@ function detailView() {
       <button class="btn primary" data-act="save">Saglabāt</button>
     </div>
     <div class="detail">
-      <div class="photo"><img id="photo" alt="Čeka bilde" hidden><p class="hint" id="photo-note">Ielādē bildi…</p></div>
+      <div class="photo"><img id="photo" alt="Čeka bilde" hidden><p class="hint" id="photo-note">Ielādē bildi…</p>
+        ${pagesOf(r).length > 1 ? `<div class="row" style="justify-content:center">${pagesOf(r).map((pg, i) => `<button type="button" class="pg${i === S.page ? " on" : ""}" data-page="${i}" aria-label="Bilde ${i + 1}" style="background-image:url('${esc(pg.thumb || "")}')"></button>`).join("")}</div>` : ""}
+        <div class="row" style="justify-content:center">
+          ${pagesOf(r).length < MAXP ? `<button class="btn" data-act="pcam">+ Foto</button><button class="btn" data-act="pfile">+ Fails</button>` : ""}
+          ${pagesOf(r).length > 1 ? `<button class="btn danger" data-act="pdel">Dzēst šo bildi</button>` : ""}
+        </div>
+        <p class="hint">${pagesOf(r).length > 1 ? `Bilde ${S.page + 1} no ${pagesOf(r).length}.` : "Vienam čekam var pievienot vairākas bildes."}</p></div>
       <div class="panel">
         <div class="grid">
           <label class="f">Datums<input type="date" id="r-date" value="${esc(r.date || "")}"></label>
@@ -285,10 +300,10 @@ function render() {
   if (S.cur) showPhoto();
 }
 async function showPhoto() {
-  const id = S.cur && S.cur.id;
+  const id = S.cur && pagesOf(S.cur)[Math.min(S.page, pagesOf(S.cur).length - 1)].id, rid = S.cur && S.cur.id;
   try {
     const blob = await store.getImg(id);
-    if (!S.cur || S.cur.id !== id) return;
+    if (!S.cur || S.cur.id !== rid) return;
     if (!blob) { $("#photo-note").textContent = "Bilde nav atrasta."; return; }
     S.photoUrl && URL.revokeObjectURL(S.photoUrl);
     S.photoUrl = URL.createObjectURL(blob); S.photoBlob = blob;
@@ -305,14 +320,34 @@ async function addFiles(files) {
     S.busy = `Saglabā ${++n}/${files.length}…`; render();
     try {
       const { big, thumb, date } = await prepImage(f);
-      const rec = { id: uid(), createdAt: Date.now(), date, shop: {}, total: null, thumb };
+      const rec = { id: uid(), createdAt: Date.now(), date, shop: {}, total: null, thumb, pages: [] };
+      rec.pages.push({ id: rec.id, thumb });
       await store.putImg(rec.id, big); await store.put(rec);
       S.list.push(rec); last = rec; ocrRun(rec, big);
     } catch (e) { console.warn(e); toast("Neizdevās saglabāt: " + e.message); }
   }
   S.busy = "";
-  if (last) { S.cur = last; S.confirmDel = false; toast(files.length > 1 ? "Čeki saglabāti" : "Čeks saglabāts. Papildini datus."); }
+  if (last) { S.cur = last; S.page = 0; S.confirmDel = false; toast(files.length > 1 ? "Čeki saglabāti" : "Čeks saglabāts. Papildini datus."); }
   render();
+}
+async function addPages(files) {
+  const r = S.cur; if (!r) return;
+  files = [...files].filter(f => f.type.startsWith("image/") || /\.(jpe?g|png|webp|heic|heif)$/i.test(f.name));
+  readForm(); const blobs = []; let n = 0;
+  for (const f of files) {
+    if (pagesOf(r).length >= MAXP) { toast("Vienam čekam var pievienot līdz " + MAXP + " bildēm"); break; }
+    toast(`Saglabā bildi ${++n}/${files.length}…`);
+    try {
+      const { big, thumb } = await prepImage(f); const pid = uid();
+      await store.putImg(pid, big);
+      if (!r.pages || !r.pages.length) r.pages = [{ id: r.id, thumb: r.thumb }];
+      r.pages.push({ id: pid, thumb }); blobs.push(big);
+      await store.put(r);
+    } catch (e) { console.warn(e); toast("Neizdevās saglabāt: " + e.message); }
+  }
+  if (!blobs.length) return;
+  S.page = pagesOf(r).length - 1; render(); toast("Bilde pievienota");
+  ocrRun(r, blobs, true);
 }
 function readForm() {
   const r = S.cur, num = id => { const v = $(id).value.trim().replace(",", "."); return v === "" ? null : Number(v); };
@@ -320,33 +355,51 @@ function readForm() {
   r.shop = { name: $("#r-name").value.trim(), regNo: $("#r-regNo").value.trim(), vatNo: $("#r-vatNo").value.trim(), address: $("#r-address").value.trim() };
 }
 document.addEventListener("click", async e => {
-  const o = e.target.closest("[data-open]"); if (o) { S.cur = S.list.find(r => r.id === o.dataset.open); S.confirmDel = false; render(); window.scrollTo(0, 0); return; }
+  const pgb = e.target.closest("[data-page]"); if (pgb) { readForm(); S.page = Number(pgb.dataset.page); render(); return; }
+  const o = e.target.closest("[data-open]"); if (o) { S.cur = S.list.find(r => r.id === o.dataset.open); S.page = 0; S.confirmDel = false; render(); window.scrollTo(0, 0); return; }
   const b = e.target.closest("[data-act]"); if (!b) return;
   const act = b.dataset.act;
   if (act === "cam") $("#f-cam").click();
   else if (act === "file") $("#f-file").click();
+  else if (act === "pcam") { S.adding = true; $("#f-cam").click(); }
+  else if (act === "pfile") { S.adding = true; $("#f-file").click(); }
+  else if (act === "pdel") {
+    const r = S.cur, pgs = pagesOf(r);
+    if (pgs.length < 2 || !confirm("Dzēst šo bildi no čeka?")) return;
+    readForm(); const pg = pgs[Math.min(S.page, pgs.length - 1)];
+    try {
+      await store.delImg(pg.id);
+      r.pages = pgs.filter(x => x.id !== pg.id); r.thumb = r.pages[0].thumb; S.page = 0;
+      await store.put(r); toast("Bilde izdzēsta");
+    } catch (err) { toast("Neizdevās izdzēst: " + err.message); }
+    render();
+  }
   else if (act === "back") { S.cur = null; S.confirmDel = false; render(); }
   else if (act === "del") { S.confirmDel = true; render(); }
   else if (act === "del-no") { S.confirmDel = false; render(); }
   else if (act === "del-yes") {
     const id = S.cur.id;
-    try { await store.del(id); S.list = S.list.filter(r => r.id !== id); S.cur = null; S.confirmDel = false; toast("Čeks izdzēsts"); }
+    try { await store.del(id, pagesOf(S.cur).map(x => x.id)); S.list = S.list.filter(r => r.id !== id); S.cur = null; S.confirmDel = false; toast("Čeks izdzēsts"); }
     catch (err) { toast("Neizdevās izdzēst: " + err.message); }
     render();
   }
   else if (act === "dl") {
     if (!S.photoBlob) return;
-    const a = document.createElement("a"); a.href = URL.createObjectURL(S.photoBlob); a.download = `Ceks_${S.cur.date || "bez-datuma"}_${S.cur.id}.jpg`; document.body.appendChild(a); a.click();
+    const a = document.createElement("a"); a.href = URL.createObjectURL(S.photoBlob); a.download = `Ceks_${S.cur.date || "bez-datuma"}_${S.cur.id}_${S.page + 1}.jpg`; document.body.appendChild(a); a.click();
     setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
   }
-  else if (act === "ocr") { if (S.photoBlob) { readForm(); ocrRun(S.cur, S.photoBlob); } }
+  else if (act === "ocr") {
+    readForm(); const r = S.cur;
+    try { const blobs = []; for (const pg of pagesOf(r)) { const bl = await store.getImg(pg.id); if (bl) blobs.push(bl); } if (blobs.length) ocrRun(r, blobs, false); }
+    catch (err) { toast("Neizdevās nolasīt bildes: " + err.message); }
+  }
   else if (act === "save") {
     readForm(); b.disabled = true;
     try { await store.put(S.cur); toast("Saglabāts"); } catch (err) { toast("Neizdevās saglabāt: " + err.message); }
     b.disabled = false;
   }
 });
-for (const id of ["#f-cam", "#f-file"]) $(id).addEventListener("change", e => { const fs = e.target.files; if (fs && fs.length) addFiles(fs); e.target.value = ""; });
+for (const id of ["#f-cam", "#f-file"]) $(id).addEventListener("change", e => { const fs = e.target.files; if (fs && fs.length) { if (S.adding && S.cur) addPages(fs); else addFiles(fs); } S.adding = false; e.target.value = ""; });
 document.addEventListener("change", e => { if (e.target.id === "f-month") { S.month = e.target.value; render(); } });
 document.addEventListener("input", e => {
   if (e.target.id === "f-q") { S.q = e.target.value; clearTimeout(S.qt); S.qt = setTimeout(() => { render(); const q = $("#f-q"); q.focus(); q.setSelectionRange(q.value.length, q.value.length); }, 250); }

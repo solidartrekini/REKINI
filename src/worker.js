@@ -75,8 +75,11 @@ async function receipts(request, env, parts) {
     return J({ ok: true });
   }
   if (parts.length === 2 && m === "DELETE") {
+    const row = await env.DB.prepare("SELECT data FROM receipts WHERE id = ?1").bind(id).first();
+    const ids = new Set([id]);
+    try { for (const pg of (JSON.parse(row.data).pages || [])) if (pg && /^[\w-]{6,64}$/.test(pg.id)) ids.add(pg.id); } catch (e) {}
     await env.DB.prepare("DELETE FROM receipts WHERE id = ?1").bind(id).run();
-    await env.DB.prepare("DELETE FROM receipt_imgs WHERE id = ?1").bind(id).run();
+    for (const i of ids) await env.DB.prepare("DELETE FROM receipt_imgs WHERE id = ?1").bind(i).run();
     return J({ ok: true });
   }
   if (parts.length === 3 && parts[2] === "img") {
@@ -86,6 +89,7 @@ async function receipts(request, env, parts) {
       await env.DB.prepare("INSERT INTO receipt_imgs (id, data) VALUES (?1, ?2) ON CONFLICT(id) DO UPDATE SET data = ?2").bind(id, b64).run();
       return J({ ok: true });
     }
+    if (m === "DELETE") { await env.DB.prepare("DELETE FROM receipt_imgs WHERE id = ?1").bind(id).run(); return J({ ok: true }); }
     if (m === "GET") {
       const r = await env.DB.prepare("SELECT data FROM receipt_imgs WHERE id = ?1").bind(id).first();
       if (!r) return J({ error: "Nav atrasts" }, 404);
