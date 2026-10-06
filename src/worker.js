@@ -12,7 +12,7 @@ async function eq(a, b) {
 
 async function api(request, env, parts) {
   const m = request.method;
-  if (parts[0] === "ping") return J({ ok: true, configured: !!(env.DB && env.APP_TOKEN) });
+  if (parts[0] === "ping") return J({ ok: true, configured: !!(env.DB && env.APP_TOKEN), db: !!env.DB, token: !!env.APP_TOKEN });
   if (!env.DB) return J({ error: "D1 datubāze nav piesaistīta (binding DB)" }, 500);
   if (!env.APP_TOKEN) return J({ error: "Nav iestatīts APP_TOKEN" }, 500);
   const tok = (request.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "");
