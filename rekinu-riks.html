@@ -587,7 +587,7 @@ function render() {
   if (!S.loaded) { app.innerHTML = `<section class="view"><p class="hint">Ielādē rēķinus…</p></section>`; return; }
   if (S.tab === "invoices") app.innerHTML = S.editing ? editorView() : listView();
   else if (S.tab === "clients") app.innerHTML = clientsView();
-  else if (S.tab === "receipts") { app.innerHTML = receiptsView(); rcDraw(); }
+  else if (S.tab === "receipts") app.innerHTML = receiptsView();
   else app.innerHTML = settingsView();
   if (S.editing) fitSheet();
   driveUI(); lockUI();
@@ -734,7 +734,6 @@ function settingsView() {
 document.addEventListener("click", async e => {
   const nb = e.target.closest("nav button"); if (nb) {
     S.tab = nb.dataset.tab; S.editing = null; S.clientEditing = null; S.confirmDel = false; render();
-    if (S.tab === "receipts") rcLoad();
     if (S.tab === "clients" && DRIVE.tok) sheetPull().then(() => { if (S.tab === "clients" && !S.clientEditing && !($("#c-name") && $("#c-name").value)) render(); });
     return;
   }
@@ -823,74 +822,11 @@ async function saveInvoice() {
   if (ok && out.status !== "draft") await drivePdfQuiet(out);
 }
 
-/* ---------- Čeki (saglabāti lapā cekus.html; šeit tikai saraksts un meklēšana) ---------- */
-const RC = { list: null, err: "", author: "", q: "", from: "", to: "", min: "", max: "" };
+/* ---------- Čeki: saraksts, meklēšana, bildes un ZIP ir cekus.html administrēšanas režīmā (iegults šeit, aiz paroles) ---------- */
 function rcAvailable() { return store.mode === "server" || (store.mode === "local" && !!window.indexedDB); }
-async function rcLoad() {
-  RC.err = ""; RC.list = null; rcDraw();
-  try {
-    if (store.mode === "server") {
-      let t = ""; try { t = localStorage.getItem("rr-token") || localStorage.getItem("rr-rtoken") || ""; } catch (e) {}
-      const r = await fetch("api/receipts", { headers: t ? { Authorization: "Bearer " + t } : {} });
-      if (!r.ok) throw new Error(r.status === 401 ? "Čekiem vajag piekļuves atslēgu. Atver čekus caur sākumlapu." : "Servera kļūda " + r.status);
-      RC.list = await r.json();
-    } else {
-      RC.list = await new Promise((res, rej) => {
-        const q = indexedDB.open("rr-cekus", 1);
-        q.onupgradeneeded = () => { q.result.createObjectStore("r", { keyPath: "id" }); q.result.createObjectStore("i"); };
-        q.onsuccess = () => { const g = q.result.transaction("r").objectStore("r").getAll(); g.onsuccess = () => res(g.result); g.onerror = () => rej(g.error); };
-        q.onerror = () => rej(q.error);
-      });
-    }
-  } catch (e) { RC.err = e.message; RC.list = []; }
-  rcDraw();
-}
 function receiptsView() {
-  return `<section class="view">
-    <div class="row"><h2 style="font-size:20px">Čeki</h2><span class="spacer"></span><a class="btn primary" href="cekus.html">Pievienot čeku</a></div>
-    <div class="filters">
-      <input type="text" id="rc-q" placeholder="Meklēt: piegādātājs, reģ. nr., piezīme, teksts" value="${esc(RC.q)}" style="min-width:0;flex:1;max-width:360px">
-      <select id="rc-author" aria-label="Autors" style="width:auto"><option value="">Visi autori</option><option>Haralds</option><option>Raimonds</option></select>
-      <label class="f" style="display:flex;align-items:center;gap:6px">No <input type="date" id="rc-from" value="${esc(RC.from)}"></label>
-      <label class="f" style="display:flex;align-items:center;gap:6px">Līdz <input type="date" id="rc-to" value="${esc(RC.to)}"></label>
-      <label class="f" style="display:flex;align-items:center;gap:6px">Summa no <input type="number" id="rc-min" step="0.01" value="${esc(RC.min)}" style="width:90px"> līdz <input type="number" id="rc-max" step="0.01" value="${esc(RC.max)}" style="width:90px"></label>
-    </div>
-    <div id="rc-body"></div>
-  </section>`;
+  return `<section class="view" style="padding-top:8px"><iframe src="cekus.html?admin=1" title="Čeki" style="width:100%;height:calc(100vh - 110px);min-height:520px;border:0;background:transparent"></iframe></section>`;
 }
-function rcFiltered() {
-  let rows = (RC.list || []).slice().sort((a, b) => (b.date || "").localeCompare(a.date || "") || (b.createdAt || 0) - (a.createdAt || 0));
-  const q = RC.q.trim().toLowerCase();
-  if (q) rows = rows.filter(r => [(r.shop || {}).name, r.author, (r.shop || {}).regNo, (r.shop || {}).address, r.note, r.text, r.pay].join(" ").toLowerCase().includes(q));
-  if (RC.author) rows = rows.filter(r => r.author === RC.author);
-  if (RC.from) rows = rows.filter(r => (r.date || "") >= RC.from);
-  if (RC.to) rows = rows.filter(r => (r.date || "") <= RC.to);
-  if (RC.min !== "") rows = rows.filter(r => (Number(r.total) || 0) >= Number(RC.min));
-  if (RC.max !== "") rows = rows.filter(r => (Number(r.total) || 0) <= Number(RC.max));
-  return rows;
-}
-function rcDraw() {
-  const box = $("#rc-body"); if (!box) return;
-  if (RC.list === null) { box.innerHTML = `<p class="hint">Ielādē čekus…</p>`; return; }
-  const rows = rcFiltered(), sum = rows.reduce((a, r) => a + (Number(r.total) || 0), 0), vat = rows.reduce((a, r) => a + (Number(r.vat) || 0), 0);
-  box.innerHTML = `${RC.err ? `<p class="err">${esc(RC.err)}</p>` : ""}
-    <div class="summary" style="margin-bottom:12px"><div><span class="eyebrow">Čeki</span><b>${rows.length}</b></div><div><span class="eyebrow">Summa</span><b>${money(sum)} €</b></div><div><span class="eyebrow">No tiem PVN</span><b>${money(vat)} €</b></div></div>
-    <div class="row" style="margin-bottom:8px"><button class="btn" type="button" id="rc-csv"${rows.length ? "" : " disabled"}>Lejupielādēt CSV</button></div>
-    <div class="tablewrap">${rows.length ? `<table class="list"><thead><tr><th>Datums</th><th>Autors</th><th>Piegādātājs</th><th>Reģ. nr.</th><th>Apmaksa</th><th class="r">PVN, EUR</th><th class="r">Summa, EUR</th><th></th></tr></thead><tbody>
-      ${rows.map(r => { const sh = r.shop || {}; return `<tr><td class="num">${fmtDate(r.date)}</td><td>${esc(r.author || "")}</td><td>${esc(sh.name || "—")}</td><td class="num">${esc(sh.regNo || "")}</td><td>${esc(r.pay || "")}</td><td class="r num">${r.vat ? money(r.vat) : ""}</td><td class="r num">${r.total != null && r.total !== "" ? money(r.total) : "—"}</td><td><a href="cekus.html#open=${encodeURIComponent(r.id)}">Atvērt</a></td></tr>`; }).join("")}
-      </tbody></table>` : `<div class="empty">${(RC.list || []).length ? "Neviens čeks neatbilst meklēšanai." : "Vēl nav saglabātu čeku. Spied Pievienot čeku."}</div>`}</div>`;
-}
-document.addEventListener("input", e => {
-  const m = { "rc-author": "author", "rc-q": "q", "rc-from": "from", "rc-to": "to", "rc-min": "min", "rc-max": "max" }[e.target.id];
-  if (m) { RC[m] = e.target.value; rcDraw(); }
-});
-document.addEventListener("click", e => {
-  if (e.target.id !== "rc-csv") return;
-  const q = v => '"' + String(v ?? "").replace(/"/g, '""') + '"';
-  const lines = [["Datums", "Autors", "Piegādātājs", "Reģ. nr.", "PVN nr.", "Adrese", "Apmaksas veids", "PVN, EUR", "Summa, EUR", "Piezīmes"].map(q).join(";")];
-  for (const r of rcFiltered()) { const sh = r.shop || {}; lines.push([r.date, r.author, sh.name, sh.regNo, sh.vatNo, sh.address, r.pay, r.vat ?? "", r.total ?? "", r.note].map(q).join(";")); }
-  saveFile("Ceki.csv", new Blob(["\ufeff" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" }));
-});
 
 /* ---------- Uzņēmumu reģistra atvērtie dati (ur-dati.bin: gzip TSV regcode\tname\taddress) ---------- */
 const UR = { state: "idle", rows: null, keys: null, p: null };

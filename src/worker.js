@@ -46,35 +46,47 @@ async function api(request, env0, parts) {
   return J({ error: "Nav atrasts" }, 404);
 }
 
-// ---- Čeki: atvērti bez paroles, ja nav iestatīts RECEIPTS_TOKEN (tad vajag to vai APP_TOKEN) ----
+// ---- Čeki ----
+// Pievienot var jebkurš (vai ar RECEIPTS_TOKEN, ja iestatīts), bet tikai svaigus čekus (6 h pēc izveides).
+// Saraksts, bildes, dzēšana: tikai ar APP_TOKEN (rēķinu rīks).
 const B64 = /^[A-Za-z0-9+/=]+$/;
+const FRESH_MS = 6 * 3600 * 1000;
 let receiptTables = false;
 async function receipts(request, env, parts) {
   const m = request.method;
-  if (env.RECEIPTS_TOKEN) {
-    const tok = (request.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "");
-    const ok = tok && ((await eq(tok, env.RECEIPTS_TOKEN)) || (env.APP_TOKEN && (await eq(tok, env.APP_TOKEN))));
-    if (!ok) return J({ error: "Nepareiza atslēga" }, 401);
-  }
+  const tok = (request.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "");
+  const admin = !!(tok && env.APP_TOKEN && (await eq(tok, env.APP_TOKEN)));
+  const uploader = admin || !env.RECEIPTS_TOKEN || !!(tok && (await eq(tok, env.RECEIPTS_TOKEN)));
+  if (!uploader) return J({ error: "Nepareiza atslēga" }, 401);
   if (!receiptTables) {
     await env.DB.exec("CREATE TABLE IF NOT EXISTS receipts (id TEXT PRIMARY KEY, data TEXT NOT NULL)");
     await env.DB.exec("CREATE TABLE IF NOT EXISTS receipt_imgs (id TEXT PRIMARY KEY, data TEXT NOT NULL)");
     receiptTables = true;
   }
+  const needAdmin = () => J({ error: "Šī darbība ir pieejama tikai rēķinu rīkā" }, 401);
   if (parts.length === 1 && m === "GET") {
+    if (!admin) return needAdmin();
     const { results } = await env.DB.prepare("SELECT id, data FROM receipts").all();
     return J(results.map(r => ({ ...JSON.parse(r.data), id: r.id })));
   }
   const id = parts[1];
   if (!id || !/^[\w-]{6,64}$/.test(id)) return J({ error: "Nederīgs id" }, 400);
+  const fresh = async rid => {
+    const row = await env.DB.prepare("SELECT data FROM receipts WHERE id = ?1").bind(rid).first();
+    if (!row) return { exists: false, ok: true, data: null };
+    let d = {}; try { d = JSON.parse(row.data); } catch (e) {}
+    return { exists: true, ok: Date.now() - (Number(d.createdAt) || 0) < FRESH_MS, data: d };
+  };
   if (parts.length === 2 && m === "PUT") {
     const body = await request.text();
     if (body.length > 150_000) return J({ error: "Par lielu" }, 413);
     try { JSON.parse(body); } catch (e) { return J({ error: "Nederīgs JSON" }, 400); }
+    if (!admin) { const f = await fresh(id); if (!f.ok) return J({ error: "Čeku vairs nevar labot no šejienes. Atver to rēķinu rīkā." }, 403); }
     await env.DB.prepare("INSERT INTO receipts (id, data) VALUES (?1, ?2) ON CONFLICT(id) DO UPDATE SET data = ?2").bind(id, body).run();
     return J({ ok: true });
   }
   if (parts.length === 2 && m === "DELETE") {
+    if (!admin) return needAdmin();
     const row = await env.DB.prepare("SELECT data FROM receipts WHERE id = ?1").bind(id).first();
     const ids = new Set([id]);
     try { for (const pg of (JSON.parse(row.data).pages || [])) if (pg && /^[\w-]{6,64}$/.test(pg.id)) ids.add(pg.id); } catch (e) {}
@@ -86,9 +98,16 @@ async function receipts(request, env, parts) {
     if (m === "PUT") {
       const b64 = (await request.text()).trim();
       if (!b64 || b64.length > 1_900_000 || !B64.test(b64)) return J({ error: "Nederīga vai pārāk liela bilde" }, 413);
+      if (!admin) {
+        // bildi drīkst pievienot tikai svaigam čekam, kura bilžu sarakstā šis id jau ir
+        const cands = [id]; const f0 = await fresh(id); let ok = f0.exists && f0.ok;
+        if (!ok) { const rid = new URL(request.url).searchParams.get("r"); if (rid && /^[\w-]{6,64}$/.test(rid)) { const f = await fresh(rid); ok = f.exists && f.ok && (f.data.pages || []).some(pg => pg.id === id); } }
+        if (!ok) return J({ error: "Bildi var pievienot tikai svaigi saglabātam čekam" }, 403);
+      }
       await env.DB.prepare("INSERT INTO receipt_imgs (id, data) VALUES (?1, ?2) ON CONFLICT(id) DO UPDATE SET data = ?2").bind(id, b64).run();
       return J({ ok: true });
     }
+    if (!admin) return needAdmin();
     if (m === "DELETE") { await env.DB.prepare("DELETE FROM receipt_imgs WHERE id = ?1").bind(id).run(); return J({ ok: true }); }
     if (m === "GET") {
       const r = await env.DB.prepare("SELECT data FROM receipt_imgs WHERE id = ?1").bind(id).first();

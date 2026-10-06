@@ -74,7 +74,7 @@ section.view { padding-top: 20px; display: grid; gap: 16px }
 input[type=file] { display: none }
 </style></head><body>
 <header class="bar"><div class="wrap">
-  <a href="./">← Sākums</a>
+  <a href="./" id="home">← Sākums</a>
   <div class="brand"><h1>Čeki</h1></div>
   <span class="store-note" id="store-note">Ielādē…</span>
 </div></header>
@@ -97,6 +97,8 @@ const getAuthor = () => { try { const a = localStorage.getItem("rr-author"); if 
 const PAY = ["Karte", "Skaidra nauda", "Pārskaitījums", "Cits"];
 function toast(msg) { const t = $("#toast"); t.textContent = msg; t.hidden = false; clearTimeout(toast.h); toast.h = setTimeout(() => t.hidden = true, 3000); }
 
+const ADMIN = /[?&]admin=1/.test(location.search);
+const MEM = new Map();
 /* ---------- glabāšana: serveris (Cloudflare D1) vai pārlūka IndexedDB ---------- */
 const store = {
   mode: "local", locked: false,
@@ -105,14 +107,14 @@ const store = {
     try { const r = await fetch("api/ping", { cache: "no-store" }); const j = r.ok ? await r.json() : null; if (j && j.ok && j.db) { this.mode = "server"; this.locked = !!j.receiptsLocked; } } catch (e) {}
   },
   async srv(path, opt = {}, retry = true) {
-    const headers = {};
-    if (this.locked) {
-      let t = ""; try { t = localStorage.getItem("rr-rtoken") || ""; } catch (e) {}
-      if (!t) { t = (prompt("Ievadi čeku piekļuves atslēgu:") || "").trim(); if (t) try { localStorage.setItem("rr-rtoken", t); } catch (e) {} }
+    const headers = {}, key = ADMIN ? "rr-token" : "rr-rtoken";
+    if (ADMIN || this.locked) {
+      let t = ""; try { t = localStorage.getItem(key) || ""; } catch (e) {}
+      if (!t) { t = (prompt(ADMIN ? "Ievadi rēķinu rīka paroli:" : "Ievadi čeku piekļuves atslēgu:") || "").trim(); if (t) try { localStorage.setItem(key, t); } catch (e) {} }
       headers.Authorization = "Bearer " + t;
     }
     const r = await fetch("api/" + path, { ...opt, headers });
-    if (r.status === 401) { try { localStorage.removeItem("rr-rtoken"); } catch (e) {} if (retry) return this.srv(path, opt, false); throw new Error("Nepareiza atslēga"); }
+    if (r.status === 401) { try { localStorage.removeItem(key); } catch (e) {} if (retry) return this.srv(path, opt, false); throw new Error("Nepareiza atslēga vai nav piekļuves"); }
     if (!r.ok) { let m = ""; try { m = (await r.json()).error; } catch (e) {} throw new Error(m || "Servera kļūda " + r.status); }
     return r;
   },
@@ -133,11 +135,13 @@ const store = {
     if (this.mode === "server") { const { id, ...rest } = rec; await this.srv("receipts/" + id, { method: "PUT", body: JSON.stringify(rest) }); }
     else { const db = await this.idb(); await this.req(db.transaction("r", "readwrite").objectStore("r").put(rec)); }
   },
-  async putImg(id, blob) {
-    if (this.mode === "server") { await this.srv(`receipts/${id}/img`, { method: "PUT", body: await blobToB64(blob) }); }
+  async putImg(id, blob, rid) {
+    MEM.set(id, blob);
+    if (this.mode === "server") { await this.srv(`receipts/${id}/img` + (rid && rid !== id ? "?r=" + rid : ""), { method: "PUT", body: await blobToB64(blob) }); }
     else { const db = await this.idb(); await this.req(db.transaction("i", "readwrite").objectStore("i").put(blob, id)); }
   },
   async getImg(id) {
+    if (MEM.has(id)) return MEM.get(id);
     if (this.mode === "server") return (await this.srv(`receipts/${id}/img`)).blob();
     const db = await this.idb(); return this.req(db.transaction("i").objectStore("i").get(id));
   },
@@ -372,26 +376,27 @@ function listView() {
     </div>
     ${S.busy ? `<p class="hint">${esc(S.busy)}</p>` : ""}
     ${OCR.busy ? `<p class="hint">Atpazīst tekstu čekiem (${OCR.busy})… Pirmoreiz tiek ielādēti valodas dati, tas var aizņemt kādu brīdi.</p>` : ""}
-    <div class="summary">
+    ${ADMIN ? "" : `<p class="hint">Šeit var tikai pievienot čekus. Saglabātie čeki, meklēšana un arhīvs ir rēķinu rīkā.</p>`}
+    ${ADMIN ? `<div class="summary">
       <div><span class="eyebrow">Čeki</span><b>${rows.length}</b></div>
       <div><span class="eyebrow">Summa</span><b>${money(sum)} €</b></div>
       <div><span class="eyebrow">PVN (ja norādīts)</span><b>${money(vat)} €</b></div>
-    </div>
-    <div class="filters">
+    </div>` : ""}
+    ${ADMIN ? `<div class="filters">
       <select id="f-month" aria-label="Mēnesis"><option value="all">Visi mēneši</option>${months.map(m => `<option value="${m}"${S.month === m ? " selected" : ""}>${m.slice(0, 4)}. ${MONTHS[Number(m.slice(5)) - 1]}</option>`).join("")}</select>
       <select id="f-fa" aria-label="Filtrs pēc autora"><option value="">Visi autori</option>${AUTHORS.map(a => `<option${S.fa === a ? " selected" : ""}>${a}</option>`).join("")}</select>
       <input type="text" id="f-q" placeholder="Meklēt pēc veikala, piezīmes vai teksta" value="${esc(S.q)}">
-    </div>
-    ${S.list.length ? `<div class="filters"><select id="zip-p" aria-label="Periods ZIP arhīvam"><option value="all">Visi čeki</option>${zipPeriods().years.map(y => `<option value="${y}">Gads ${y}</option>`).join("")}${zipPeriods().months.map(m => `<option value="${m}">${m.slice(0, 4)}. ${MONTHS[Number(m.slice(5)) - 1]}</option>`).join("")}</select><button class="btn" data-act="zip">Lejupielādēt ZIP</button></div>` : ""}
+    </div>` : ""}
+    ${ADMIN && S.list.length ? `<div class="filters"><select id="zip-p" aria-label="Periods ZIP arhīvam"><option value="all">Visi čeki</option>${zipPeriods().years.map(y => `<option value="${y}">Gads ${y}</option>`).join("")}${zipPeriods().months.map(m => `<option value="${m}">${m.slice(0, 4)}. ${MONTHS[Number(m.slice(5)) - 1]}</option>`).join("")}</select><button class="btn" data-act="zip">Lejupielādēt ZIP</button></div>` : ""}
     ${rows.length ? `<div class="cards">${rows.map(r => `<button class="card" data-open="${r.id}"><div class="th" style="background-image:url('${esc(r.thumb || "")}')"></div><div class="meta"><b>${esc(r.shop && r.shop.name || "Bez veikala")}</b><small class="num">${fmtDate(r.date)}${r.author ? " · " + esc(r.author) : ""}</small>${r.total ? `<span class="num">${money(r.total)} €</span>` : `<span class="miss">bez summas</span>`}</div></button>`).join("")}</div>`
-      : `<div class="empty">${S.list.length ? "Neviens čeks neatbilst filtram." : "Vēl nav neviena čeka. Uzņem foto vai augšupielādē bildi."}</div>`}
+      : `<div class="empty">${S.list.length ? "Neviens čeks neatbilst filtram." : ADMIN ? "Vēl nav neviena čeka. Uzņem foto vai augšupielādē bildi." : "Šajā apmeklējumā vēl nav pievienotu čeku."}</div>`}
   </section>`;
 }
 function detailView() {
   const r = S.cur, sh = r.shop || {};
   return `<section class="view">
-    <div class="row"><button class="btn" data-act="back">← Visi čeki</button><span class="spacer"></span>
-      ${S.confirmDel ? `<span class="confirm">Dzēst čeku? <button class="btn danger" data-act="del-yes">Dzēst</button><button class="btn" data-act="del-no">Atcelt</button></span>` : `<button class="btn danger" data-act="del">Dzēst</button>`}
+    <div class="row"><button class="btn" data-act="back">${ADMIN ? "← Visi čeki" : "← Atpakaļ"}</button><span class="spacer"></span>
+      ${!ADMIN ? "" : S.confirmDel ? `<span class="confirm">Dzēst čeku? <button class="btn danger" data-act="del-yes">Dzēst</button><button class="btn" data-act="del-no">Atcelt</button></span>` : `<button class="btn danger" data-act="del">Dzēst</button>`}
       <button class="btn" data-act="dl">Lejupielādēt bildi</button>
       <button class="btn primary" data-act="save">Saglabāt</button>
     </div>
@@ -400,7 +405,7 @@ function detailView() {
         ${pagesOf(r).length > 1 ? `<div class="row" style="justify-content:center">${pagesOf(r).map((pg, i) => `<button type="button" class="pg${i === S.page ? " on" : ""}" data-page="${i}" aria-label="Bilde ${i + 1}" style="background-image:url('${esc(pg.thumb || "")}')"></button>`).join("")}</div>` : ""}
         <div class="row" style="justify-content:center">
           ${pagesOf(r).length < MAXP ? `<button class="btn" data-act="pcam">+ Foto</button><button class="btn" data-act="pfile">+ Fails / PDF</button>` : ""}
-          ${pagesOf(r).length > 1 ? `<button class="btn danger" data-act="pdel">Dzēst šo bildi</button>` : ""}
+          ${ADMIN && pagesOf(r).length > 1 ? `<button class="btn danger" data-act="pdel">Dzēst šo bildi</button>` : ""}
         </div>
         <p class="hint">${pagesOf(r).length > 1 ? `Bilde ${S.page + 1} no ${pagesOf(r).length}.` : "Vienam čekam var pievienot vairākas bildes."}</p></div>
       <div class="panel">
@@ -485,9 +490,10 @@ async function addFiles(files) {
     try {
       const { items, date, text } = await prepFile(f);
       const rec = { id: uid(), createdAt: Date.now(), date, author: getAuthor(), shop: {}, total: null, thumb: items[0].thumb, pages: [] };
-      for (const [i, it] of items.entries()) { const pid = i === 0 ? rec.id : uid(); rec.pages.push({ id: pid, thumb: it.thumb }); await store.putImg(pid, it.big); }
-      if (text) { rec.text = text; await autoFill(rec); }
+      for (const [i, it] of items.entries()) rec.pages.push({ id: i === 0 ? rec.id : uid(), thumb: it.thumb });
       await store.put(rec);
+      for (const [i, it] of items.entries()) await store.putImg(rec.pages[i].id, it.big, rec.id);
+      if (text) { rec.text = text; await autoFill(rec); await store.put(rec); }
       S.list.push(rec); last = rec;
       if (!text) ocrRun(rec, items.map(i => i.big));
     } catch (e) { console.warn(e); toast("Neizdevās saglabāt: " + e.message); }
@@ -507,9 +513,11 @@ async function addPages(files) {
     try {
       const res = await prepFile(f, room);
       if (!r.pages || !r.pages.length) r.pages = [{ id: r.id, thumb: r.thumb }];
-      for (const it of res.items) { const pid = uid(); await store.putImg(pid, it.big); r.pages.push({ id: pid, thumb: it.thumb }); if (!res.text) blobs.push(it.big); }
-      if (res.text) text += (text ? "\n\n" : "") + res.text;
+      const added = res.items.map(it => ({ id: uid(), thumb: it.thumb, big: it.big }));
+      for (const a of added) r.pages.push({ id: a.id, thumb: a.thumb });
       await store.put(r);
+      for (const a of added) { await store.putImg(a.id, a.big, r.id); if (!res.text) blobs.push(a.big); }
+      if (res.text) text += (text ? "\n\n" : "") + res.text;
     } catch (e) { console.warn(e); toast("Neizdevās saglabāt: " + e.message); }
   }
   if (!blobs.length && !text) return;
@@ -635,13 +643,14 @@ document.addEventListener("click", e => {
 });
 
 /* ---------- starts ---------- */
+if (window.top !== window.self) { const bar = $(".bar"); if (bar) bar.hidden = true; }
 (async () => {
   render();
   await store.init();
   $("#store-note").textContent = store.mode === "server" ? "Čeki saglabājas serverī" : "Čeki saglabājas šajā pārlūkā";
-  try { S.list = await store.list(); } catch (e) { toast("Neizdevās ielādēt čekus: " + e.message); S.list = []; }
+  if (ADMIN) try { S.list = await store.list(); } catch (e) { toast("Neizdevās ielādēt čekus: " + e.message); S.list = []; }
   S.loaded = true;
-  const m = /[#&]open=([^&]+)/.exec(location.hash); if (m) { const r = S.list.find(x => x.id === decodeURIComponent(m[1])); if (r) { S.cur = r; S.page = 0; } }
+  const m = ADMIN && /[#&]open=([^&]+)/.exec(location.hash); if (m) { const r = S.list.find(x => x.id === decodeURIComponent(m[1])); if (r) { S.cur = r; S.page = 0; } }
   render();
 })();
 </script></body></html>
