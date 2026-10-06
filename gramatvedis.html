@@ -35,7 +35,7 @@ iframe { width: 100%; height: calc(100vh - 120px); min-height: 560px; border: 0;
 [hidden] { display: none !important }
 </style></head><body>
 <header class="bar"><div class="wrap"><a href="./">← Sākums</a><h1>Grāmatvedei</h1>
-<nav><button data-tab="receipts">Čeki</button><button data-tab="invoices">Rēķini</button><button data-tab="bank">Konta pārskats</button></nav></div></header>
+<nav><button data-tab="bank">Konta pārskats</button><button data-tab="receipts">Čeki</button><button data-tab="invoices">Rēķini</button></nav></div></header>
 <main class="wrap" id="app"></main>
 <div class="toast" id="toast" hidden role="status"></div>
 <script>
@@ -76,7 +76,7 @@ function makeZip(files) {
   return new Blob([...parts, ...cen, new Uint8Array(end.buffer)], { type: "application/zip" });
 }
 
-const S = { sort: { k: "date", d: -1 }, tab: "receipts", invoices: [], ok: false, period: "all", q: "" };
+const S = { sort: { k: "date", d: -1 }, tab: "bank", invoices: [], ok: false, period: "all", q: "" };
 const fname = i => `Rekins_${String(i.number).replace(/[^\w.-]+/g, "_")}.pdf`;
 function save(name, blob) { const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000); }
 function periods() { const y = new Set(), m = new Set(); for (const i of S.invoices) if (i.date) { y.add(i.date.slice(0, 4)); m.add(i.date.slice(0, 7)); } return { years: [...y].sort(), months: [...m].sort() }; }
