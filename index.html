@@ -1058,7 +1058,7 @@ async function driveConnect() {
     await loadGIS();
     const seen = (() => { try { return !!localStorage.getItem("rr-drive"); } catch (e) { return false; } })();
     const r = await new Promise((res, rej) => google.accounts.oauth2.initTokenClient({
-      client_id: gcid(), scope: "https://www.googleapis.com/auth/drive.file", hint: ghint(), prompt: seen ? "" : "select_account",
+      client_id: gcid(), scope: "https://www.googleapis.com/auth/drive.file", hint: ghint(), prompt: "select_account",
       callback: x => x.error ? rej(new Error(x.error_description || x.error)) : res(x),
       error_callback: e => rej(new Error(e.type === "popup_closed" ? "Pieslēgšanās atcelta" : (e.message || e.type || "kļūda")))
     }).requestAccessToken());
