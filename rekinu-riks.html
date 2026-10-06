@@ -567,16 +567,16 @@ document.addEventListener("click", e => {
 });
 /* ---------- drag & drop: PDF rēķini uz rēķinu saraksta ---------- */
 (() => {
-  const has = e => e.dataTransfer && [...(e.dataTransfer.types || [])].includes("Files"); let n = 0;
-  const ov = document.createElement("div"); ov.hidden = true;
-  ov.style.cssText = "position:fixed;inset:8px;z-index:90;border:3px dashed var(--accent);border-radius:12px;background:rgb(158 42 53 / .08);display:grid;place-items:center;font:600 20px var(--f-body);color:var(--accent);pointer-events:none";
+  const has = e => e.dataTransfer && [...(e.dataTransfer.types || [])].includes("Files"); let tm = 0;
+  const ov = document.createElement("div");
+  ov.style.cssText = "display:none;position:fixed;inset:8px;z-index:90;border:3px dashed var(--accent);border-radius:12px;background:rgb(158 42 53 / .08);place-items:center;font:600 20px var(--f-body);color:var(--accent);pointer-events:none";
   ov.textContent = "Nomet vecos rēķinu PDF šeit"; document.body.appendChild(ov);
   const on = () => S.tab === "invoices" && !S.editing && S.loaded;
-  addEventListener("dragenter", e => { if (has(e) && on()) { n++; ov.hidden = false; } });
-  addEventListener("dragleave", e => { if (has(e) && --n <= 0) { n = 0; ov.hidden = true; } });
-  addEventListener("dragover", e => { if (has(e)) e.preventDefault(); });
+  const show = v => { clearTimeout(tm); ov.style.display = v ? "grid" : "none"; if (v) tm = setTimeout(() => show(false), 300); };
+  addEventListener("dragover", e => { if (has(e)) { e.preventDefault(); if (on()) show(true); } });
+  addEventListener("dragleave", e => { if (!e.relatedTarget) show(false); });
   addEventListener("drop", e => {
-    if (!has(e)) return; e.preventDefault(); n = 0; ov.hidden = true;
+    if (!has(e)) return; e.preventDefault(); show(false);
     if (!on()) { toast("PDF var vilkt rēķinu sarakstā"); return; }
     const fl = [...e.dataTransfer.files].filter(f => /pdf/.test(f.type) || /\.pdf$/i.test(f.name));
     if (fl.length) importPdfs(fl); else toast("Šeit var vilkt tikai PDF rēķinus");

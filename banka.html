@@ -407,14 +407,14 @@ document.addEventListener("click", async e => {
 
 /* ---------- drag & drop ---------- */
 function dropZone(onDrop) {
-  const ov = document.createElement("div"); ov.hidden = true;
-  ov.style.cssText = "position:fixed;inset:8px;z-index:90;border:3px dashed var(--accent);border-radius:12px;background:rgb(158 42 53 / .08);display:grid;place-items:center;font:600 20px var(--f-body);color:var(--accent);pointer-events:none";
+  const ov = document.createElement("div");
+  ov.style.cssText = "display:none;position:fixed;inset:8px;z-index:90;border:3px dashed var(--accent);border-radius:12px;background:rgb(158 42 53 / .08);place-items:center;font:600 20px var(--f-body);color:var(--accent);pointer-events:none";
   ov.textContent = "Nomet failus šeit"; document.body.appendChild(ov);
-  const has = e => e.dataTransfer && [...(e.dataTransfer.types || [])].includes("Files"); let n = 0;
-  addEventListener("dragenter", e => { if (has(e)) { n++; ov.hidden = false; } });
-  addEventListener("dragleave", e => { if (has(e) && --n <= 0) { n = 0; ov.hidden = true; } });
-  addEventListener("dragover", e => { if (has(e)) e.preventDefault(); });
-  addEventListener("drop", e => { if (!has(e)) return; e.preventDefault(); n = 0; ov.hidden = true; const fl = [...e.dataTransfer.files]; if (fl.length) onDrop(fl, e); });
+  const has = e => e.dataTransfer && [...(e.dataTransfer.types || [])].includes("Files"); let tm = 0;
+  const show = on => { clearTimeout(tm); ov.style.display = on ? "grid" : "none"; if (on) tm = setTimeout(() => show(false), 300); };
+  addEventListener("dragover", e => { if (has(e)) { e.preventDefault(); show(true); } });
+  addEventListener("dragleave", e => { if (!e.relatedTarget) show(false); });
+  addEventListener("drop", e => { if (!has(e)) return; e.preventDefault(); show(false); const fl = [...e.dataTransfer.files]; if (fl.length) onDrop(fl, e); });
 }
 dropZone(async (fl, e) => {
   const isRc = f => /^image\//.test(f.type) || /pdf/.test(f.type) || /\.(pdf|jpe?g|png|heic|webp)$/i.test(f.name);
