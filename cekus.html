@@ -390,13 +390,17 @@ function parseDate(lines, hint) {
   if (best.sc < -2) return null;          // tikai "slikti" konteksta datumi: nesaki neko
   return best.v;
 }
+const OWN_REG = "40103952422", isOwnName = n => /solidart/i.test(n || ""), isOwnLine = l => /solidart/i.test(l) || l.replace(/\s/g, "").includes(OWN_REG);
 function parseShop(lines) {
+  const all = lines; lines = lines.filter(l => !isOwnLine(l));  // pircējs (mūsu uzņēmums) nav veikals
   let regNo = "";
   for (const l of lines) { const m = /re[gģ][^\d\n]{0,14}(\d{11})(?!\d)/i.exec(l) || /(?<![\d])([45]\d{10})(?!\d)/.exec(l); if (m) { regNo = m[1]; break; } }
   if (!regNo) for (const l of lines) { const m = /\bLV\s?(\d{11})(?!\d)/i.exec(l); if (m) { regNo = m[1]; break; } }
   let name = "";
   for (const l of lines.slice(0, 14)) { if (/\b(SIA|AS|A\/S|IK|Z\/S|KS)\b|["„“«]/i.test(l) && /\p{L}{3}/u.test(l)) { name = l.replace(/^[^\p{L}"„“«]+|[^\p{L}\p{N}"”“».)]+$/gu, "").trim(); break; } }
   if (!name) name = (lines.slice(0, 5).find(l => (l.match(/\p{L}/gu) || []).length >= 4) || "").replace(/^[^\p{L}]+|[^\p{L}\p{N}.)]+$/gu, "").trim();
+  if (regNo === OWN_REG) regNo = "";
+  if (isOwnName(name)) name = "";
   return { regNo, name };
 }
 function parseReceipt(text, hint) {
@@ -416,11 +420,13 @@ async function autoFill(rec) {
   const info = parseReceipt(rec.text, rec.photoDate); if (!info.total && !info.date && !info.name && !info.regNo) return [];
   const got = [];
   rec.shop = rec.shop || {};
+  if (isOwnName(rec.shop.name) || rec.shop.regNo === OWN_REG) rec.shop = { ...rec.shop, name: "", regNo: rec.shop.regNo === OWN_REG ? "" : rec.shop.regNo, vatNo: "", address: "" };
   if (info.total && (rec.total == null || rec.total === "")) { rec.total = info.total; got.push("summa"); }
   if (info.vat && (rec.vat == null || rec.vat === "")) { rec.vat = info.vat; got.push("PVN"); }
   if (info.date && rec.dateSrc !== "manual" && info.date !== rec.date) { rec.date = info.date; rec.dateSrc = "ocr"; got.push("datums"); }
   if (!rec.shop.name || !rec.shop.regNo) {
     let hit = null; try { hit = await lookupShop(info); } catch (e) {}
+    if (hit && (hit.regNo === OWN_REG || isOwnName(hit.name))) hit = null;
     if (hit) { if (!rec.shop.name) rec.shop.name = hit.name; if (!rec.shop.regNo) rec.shop.regNo = hit.regNo; if (!rec.shop.address) rec.shop.address = hit.address; got.push("veikals (reģistrs)"); }
     else { if (!rec.shop.name && info.name) { rec.shop.name = info.name; got.push("veikals"); } if (!rec.shop.regNo && info.regNo) rec.shop.regNo = info.regNo; }
   }
