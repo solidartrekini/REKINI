@@ -1,4 +1,4 @@
-// Rēķinu rīka serveris: Cloudflare Pages Functions + D1 (binding DB).
+// Rēķinu rīka serveris: Cloudflare Worker (statiskie faili + /api) ar D1 (binding DB).
 // Piekļuve ar slepenu atslēgu (vide: APP_TOKEN), ko lietotne sūta kā "Authorization: Bearer ...".
 const J = (o, s = 200) => new Response(JSON.stringify(o), { status: s, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } });
 const COLL = new Set(["clients", "invoices", "config"]);
@@ -10,8 +10,7 @@ async function eq(a, b) {
   return d === 0;
 }
 
-export async function onRequest({ request, env, params }) {
-  const parts = [].concat(params.path || []);
+async function api(request, env, parts) {
   const m = request.method;
   if (parts[0] === "ping") return J({ ok: true, configured: !!(env.DB && env.APP_TOKEN) });
   if (!env.DB) return J({ error: "D1 datubāze nav piesaistīta (binding DB)" }, 500);
@@ -44,3 +43,11 @@ export async function onRequest({ request, env, params }) {
   }
   return J({ error: "Nav atrasts" }, 404);
 }
+
+export default {
+  async fetch(request, env) {
+    const url = new URL(request.url);
+    if (url.pathname.startsWith("/api/")) return api(request, env, url.pathname.slice(5).split("/").filter(Boolean).map(decodeURIComponent));
+    return env.ASSETS.fetch(request);
+  }
+};
