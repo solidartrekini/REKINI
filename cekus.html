@@ -55,6 +55,8 @@ section.view { padding-top: 20px; display: grid; gap: 16px }
 .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px }
 .card { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; cursor: pointer; text-align: left; padding: 0; display: grid; align-content: start }
 .card:hover { border-color: var(--muted) }
+.card { position: relative }
+.dupb { position: absolute; top: 6px; left: 6px; z-index: 1; background: var(--bad); color: #fff; font-size: 11px; font-weight: 600; padding: 1px 8px; border-radius: 99px }
 .card .th { aspect-ratio: 3/4; background: var(--surface-2) center / cover no-repeat }
 .card .meta { padding: 8px 10px; display: grid; gap: 1px; min-width: 0 }
 .card .meta b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
@@ -148,6 +150,14 @@ const store = {
     if (this.mode === "server") return (await this.srv(`receipts/${id}/img`)).blob();
     const db = await this.idb(); return this.req(db.transaction("i").objectStore("i").get(id));
   },
+  async dup(hash, key, exclude) {
+    if (this.mode === "server") {
+      const q = new URLSearchParams(); if (hash) q.set("hash", hash); if (key) q.set("key", key); if (exclude) q.set("exclude", exclude);
+      try { return await (await this.srv("receipts/dup?" + q)).json(); } catch (e) { return { hash: false, key: false }; }
+    }
+    const all = await this.list();
+    return { hash: !!hash && all.some(r => r.id !== exclude && (r.hashes || []).includes(hash)), key: !!key && all.some(r => r.id !== exclude && r.dupKey === key) };
+  },
   async delImg(id) {
     if (this.mode === "server") await this.srv(`receipts/${id}/img`, { method: "DELETE" });
     else { const db = await this.idb(); await this.req(db.transaction("i", "readwrite").objectStore("i").delete(id)); }
@@ -223,7 +233,7 @@ function ocrRun(rec, blobs, append) {
       const text = append && rec.text ? rec.text + "\n\n" + parts.join("\n\n") : parts.join("\n\n");
       rec.text = text.trim(); rec.ocrAt = Date.now();
       const tt = $("#r-total"); if (S.cur && S.cur.id === rec.id) { if (tt && tt.value) rec.total = Number(tt.value.replace(",", ".")) || rec.total; }
-      await autoFill(rec);
+      await autoFill(rec); await checkDup(rec);
       await store.put(rec);
       if (S.cur && S.cur.id === rec.id) { const t = $("#r-text"); if (t) t.value = rec.text; applyToForm(rec); }
     } catch (e) { console.warn("OCR", e); toast("Teksta atpazīšana neizdevās: " + e.message); }
@@ -364,7 +374,15 @@ const pagesOf = r => r.pages && r.pages.length ? r.pages : [{ id: r.id, thumb: r
 const S = { fa: "", page: 0, adding: false, list: [], loaded: false, cur: null, month: "all", q: "", confirmDel: false, busy: "" };
 function monthKey(r) { return (r.date || "").slice(0, 7); }
 
+function dupGroups() {
+  const ids = new Set(), by = new Map();
+  const add = (k, r) => { if (!k) return; (by.get(k) || by.set(k, []).get(k)).push(r.id); };
+  for (const r of S.list) { add(dupKeyOf(r), r); for (const h of r.hashes || []) add("h:" + h, r); }
+  for (const g of by.values()) if (new Set(g).size > 1) g.forEach(i => ids.add(i));
+  return ids;
+}
 function listView() {
+  const dupIds = ADMIN ? dupGroups() : new Set();
   let rows = S.list.slice().sort((a, b) => (b.date || "").localeCompare(a.date || "") || (b.createdAt || 0) - (a.createdAt || 0));
   const months = [...new Set(rows.map(monthKey).filter(Boolean))].sort().reverse();
   if (S.month !== "all") rows = rows.filter(r => monthKey(r) === S.month);
@@ -391,7 +409,7 @@ function listView() {
       <input type="text" id="f-q" placeholder="Meklēt pēc veikala, piezīmes vai teksta" value="${esc(S.q)}">
     </div>` : ""}
     ${ADMIN && S.list.length ? `<div class="filters"><select id="zip-p" aria-label="Periods ZIP arhīvam"><option value="all">Visi čeki</option>${zipPeriods().years.map(y => `<option value="${y}">Gads ${y}</option>`).join("")}${zipPeriods().months.map(m => `<option value="${m}">${m.slice(0, 4)}. ${MONTHS[Number(m.slice(5)) - 1]}</option>`).join("")}</select><button class="btn" data-act="zip">Lejupielādēt ZIP</button></div>` : ""}
-    ${rows.length ? `<div class="cards">${rows.map(r => `<button class="card" data-open="${r.id}"><div class="th" style="background-image:url('${esc(r.thumb || "")}')"></div><div class="meta"><b>${esc(r.shop && r.shop.name || "Bez veikala")}</b><small class="num">${fmtDate(r.date)}${r.author ? " · " + esc(r.author) : ""}</small>${r.total ? `<span class="num">${money(r.total)} €</span>` : `<span class="miss">bez summas</span>`}</div></button>`).join("")}</div>`
+    ${rows.length ? `<div class="cards">${rows.map(r => `<button class="card" data-open="${r.id}">${dupIds.has(r.id) ? `<span class="dupb">Dublikāts?</span>` : ""}<div class="th" style="background-image:url('${esc(r.thumb || "")}')"></div><div class="meta"><b>${esc(r.shop && r.shop.name || "Bez veikala")}</b><small class="num">${fmtDate(r.date)}${r.author ? " · " + esc(r.author) : ""}</small>${r.total ? `<span class="num">${money(r.total)} €</span>` : `<span class="miss">bez summas</span>`}</div></button>`).join("")}</div>`
       : `<div class="empty">${S.list.length ? "Neviens čeks neatbilst filtram." : ADMIN ? "Vēl nav neviena čeka. Uzņem foto vai augšupielādē bildi." : "Šajā apmeklējumā vēl nav pievienotu čeku."}</div>`}
   </section>`;
 }
@@ -432,6 +450,7 @@ function detailView() {
         </div>
         <label class="f">Piezīmes<textarea id="r-note">${esc(r.note)}</textarea></label>
         <label class="f"><span class="row" style="justify-content:space-between">Atpazītais teksts<button type="button" class="btn" data-act="ocr" style="padding:2px 10px"${OCR.busy ? " disabled" : ""}>Atpazīt no jauna</button></span><textarea id="r-text" rows="8" style="font:13px/1.4 var(--f-mono)">${esc(r.text)}</textarea></label>
+        <p class="hint" id="dup-note" style="color:var(--bad);font-weight:500">${r.dupFlag ? DUP_MSG : ""}</p>
         <p class="hint" id="auto-note">${r.auto && r.auto.length ? "Automātiski noteikts: " + esc(r.auto.join(", ")) + ". Pārbaudi un labo, ja vajag." : ""}</p>
         <div class="row"><button type="button" class="btn" data-act="auto">Aizpildīt tukšos laukus no teksta</button></div>
         <p class="hint">Veikala dati tiek saglabāti tikai pie šī čeka, nevis klientu sarakstā.</p>
@@ -458,6 +477,21 @@ async function showPhoto() {
 }
 
 /* ---------- darbības ---------- */
+async function hashFile(file) {
+  try { if (!(window.crypto && crypto.subtle)) return ""; const d = await crypto.subtle.digest("SHA-256", await file.arrayBuffer()); return [...new Uint8Array(d)].map(x => x.toString(16).padStart(2, "0")).join(""); } catch (e) { return ""; }
+}
+function dupKeyOf(r) {
+  const sh = r.shop || {}, id = String(sh.regNo || norm(sh.name || "")).toLowerCase().replace(/[^a-z0-9]/g, "");
+  if (!id || !r.date || r.total == null || r.total === "" || isNaN(Number(r.total))) return "";
+  return `${id}|${r.date}|${Number(r.total).toFixed(2)}`;
+}
+const DUP_MSG = "Uzmanību: šķiet, ka šāds čeks (tas pats veikals, datums un summa) jau ir saglabāts.";
+async function checkDup(rec) {
+  const key = dupKeyOf(rec); rec.dupKey = key; rec.dupFlag = false;
+  if (key) { const r = await store.dup(null, key, rec.id); rec.dupFlag = !!r.key; }
+  if (S.cur && S.cur.id === rec.id) { const n = $("#dup-note"); if (n) n.textContent = rec.dupFlag ? DUP_MSG : ""; }
+  return rec.dupFlag;
+}
 const isOk = f => f.type.startsWith("image/") || f.type === "application/pdf" || /\.(jpe?g|png|webp|heic|heif|pdf)$/i.test(f.name);
 const isPdf = f => f.type === "application/pdf" || /\.pdf$/i.test(f.name);
 const PDFJS = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/";
@@ -491,12 +525,14 @@ async function addFiles(files) {
   for (const f of files) {
     S.busy = `Saglabā ${++n}/${files.length}…`; render();
     try {
+      const hash = await hashFile(f);
+      if (hash) { const d = await store.dup(hash, "", ""); if ((d.hash || S.list.some(r => (r.hashes || []).includes(hash))) && !confirm(`Fails "${f.name}" jau ir saglabāts kā čeks. Pievienot tāpat?`)) continue; }
       const { items, date, text } = await prepFile(f);
-      const rec = { id: uid(), createdAt: Date.now(), date, author: getAuthor(), shop: {}, total: null, thumb: items[0].thumb, pages: [] };
+      const rec = { id: uid(), createdAt: Date.now(), date, author: getAuthor(), shop: {}, total: null, thumb: items[0].thumb, pages: [], hashes: hash ? [hash] : [] };
       for (const [i, it] of items.entries()) rec.pages.push({ id: i === 0 ? rec.id : uid(), thumb: it.thumb });
       await store.put(rec);
       for (const [i, it] of items.entries()) await store.putImg(rec.pages[i].id, it.big, rec.id);
-      if (text) { rec.text = text; await autoFill(rec); await store.put(rec); }
+      if (text) { rec.text = text; await autoFill(rec); await checkDup(rec); await store.put(rec); }
       S.list.push(rec); last = rec;
       if (!text) ocrRun(rec, items.map(i => i.big));
     } catch (e) { console.warn(e); toast("Neizdevās saglabāt: " + e.message); }
@@ -514,6 +550,8 @@ async function addPages(files) {
     if (room <= 0) { toast("Vienam čekam var pievienot līdz " + MAXP + " bildēm"); break; }
     toast(`Saglabā ${++n}/${files.length}…`);
     try {
+      const hash = await hashFile(f);
+      if (hash) { if ((r.hashes || []).includes(hash)) { toast("Šis fails jau ir pievienots šim čekam"); continue; } const d = await store.dup(hash, "", r.id); if (d.hash && !confirm(`Fails "${f.name}" jau ir saglabāts kā cits čeks. Pievienot tāpat?`)) continue; r.hashes = [...(r.hashes || []), hash]; }
       const res = await prepFile(f, room);
       if (!r.pages || !r.pages.length) r.pages = [{ id: r.id, thumb: r.thumb }];
       const added = res.items.map(it => ({ id: uid(), thumb: it.thumb, big: it.big }));
@@ -569,7 +607,7 @@ document.addEventListener("click", async e => {
     const a = document.createElement("a"); a.href = URL.createObjectURL(S.photoBlob); a.download = `Ceks_${S.cur.date || "bez-datuma"}_${S.cur.id}_${S.page + 1}.jpg`; document.body.appendChild(a); a.click();
     setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
   }
-  else if (act === "auto") { readForm(); b.disabled = true; const g = await autoFill(S.cur); b.disabled = false; applyToForm(S.cur); toast(g.length ? "Aizpildīts: " + g.join(", ") : "No teksta neko jaunu noteikt neizdevās"); }
+  else if (act === "auto") { readForm(); b.disabled = true; const g = await autoFill(S.cur); await checkDup(S.cur); b.disabled = false; applyToForm(S.cur); toast(g.length ? "Aizpildīts: " + g.join(", ") : "No teksta neko jaunu noteikt neizdevās"); }
   else if (act === "ocr") {
     readForm(); const r = S.cur;
     try { const blobs = []; for (const pg of pagesOf(r)) { const bl = await store.getImg(pg.id); if (bl) blobs.push(bl); } if (blobs.length) ocrRun(r, blobs, false); }
@@ -577,7 +615,7 @@ document.addEventListener("click", async e => {
   }
   else if (act === "save") {
     readForm(); b.disabled = true;
-    try { await store.put(S.cur); toast("Saglabāts"); } catch (err) { toast("Neizdevās saglabāt: " + err.message); }
+    try { await checkDup(S.cur); await store.put(S.cur); toast("Saglabāts"); } catch (err) { toast("Neizdevās saglabāt: " + err.message); }
     b.disabled = false;
   }
 });

@@ -69,6 +69,15 @@ async function receipts(request, env, parts) {
     const { results } = await env.DB.prepare("SELECT id, data FROM receipts").all();
     return J(results.map(r => ({ ...JSON.parse(r.data), id: r.id })));
   }
+  if (parts[1] === "dup" && parts.length === 2 && m === "GET") {
+    // vai tāds fails (hash) vai tāds pats čeks (veikals+datums+summa) jau ir; atbild tikai ar jā/nē
+    const u = new URL(request.url), h = u.searchParams.get("hash") || "", k = u.searchParams.get("key") || "", ex = u.searchParams.get("exclude") || "";
+    const has = async pat => !!(await env.DB.prepare("SELECT id FROM receipts WHERE data LIKE ?1 AND id != ?2 LIMIT 1").bind(pat, ex).first());
+    return J({
+      hash: /^[0-9a-f]{64}$/.test(h) ? await has('%"' + h + '"%') : false,
+      key: /^[a-z0-9|.-]{6,120}$/.test(k) ? await has('%"dupKey":"' + k + '"%') : false
+    });
+  }
   const id = parts[1];
   if (!id || !/^[\w-]{6,64}$/.test(id)) return J({ error: "Nederīgs id" }, 400);
   const fresh = async rid => {
