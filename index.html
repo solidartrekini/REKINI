@@ -295,6 +295,49 @@ async function saveFile(filename, blob) {
   setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
 }
 
+/* ---------- ZIP (bez saspiešanas; PDF jau ir saspiesti) ---------- */
+const CRC_T = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+function crc32(u8) { let c = 0xFFFFFFFF; for (let i = 0; i < u8.length; i++) c = CRC_T[(c ^ u8[i]) & 255] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; }
+function makeZip(files) {
+  const enc = new TextEncoder(), parts = [], cen = []; let off = 0;
+  const d = new Date(), dt = ((d.getFullYear() - 1980) << 9 | (d.getMonth() + 1) << 5 | d.getDate()) & 0xFFFF, tm = (d.getHours() << 11 | d.getMinutes() << 5 | d.getSeconds() >> 1) & 0xFFFF;
+  for (const f of files) {
+    const nm = enc.encode(f.name), crc = crc32(f.data), sz = f.data.length;
+    const lh = new DataView(new ArrayBuffer(30));
+    lh.setUint32(0, 0x04034b50, true); lh.setUint16(4, 20, true); lh.setUint16(6, 0x0800, true); lh.setUint16(8, 0, true); lh.setUint16(10, tm, true); lh.setUint16(12, dt, true);
+    lh.setUint32(14, crc, true); lh.setUint32(18, sz, true); lh.setUint32(22, sz, true); lh.setUint16(26, nm.length, true); lh.setUint16(28, 0, true);
+    parts.push(new Uint8Array(lh.buffer), nm, f.data);
+    const ch = new DataView(new ArrayBuffer(46));
+    ch.setUint32(0, 0x02014b50, true); ch.setUint16(4, 20, true); ch.setUint16(6, 20, true); ch.setUint16(8, 0x0800, true); ch.setUint16(10, 0, true); ch.setUint16(12, tm, true); ch.setUint16(14, dt, true);
+    ch.setUint32(16, crc, true); ch.setUint32(20, sz, true); ch.setUint32(24, sz, true); ch.setUint16(28, nm.length, true); ch.setUint32(42, off, true);
+    cen.push(new Uint8Array(ch.buffer), nm);
+    off += 30 + nm.length + sz;
+  }
+  const cs = cen.reduce((a, x) => a + x.length, 0), end = new DataView(new ArrayBuffer(22));
+  end.setUint32(0, 0x06054b50, true); end.setUint16(8, files.length, true); end.setUint16(10, files.length, true); end.setUint32(12, cs, true); end.setUint32(16, off, true);
+  return new Blob([...parts, ...cen, new Uint8Array(end.buffer)], { type: "application/zip" });
+}
+function zipPeriods() {
+  const ys = new Set(), ms = new Set();
+  for (const i of S.invoices) if (i.status !== "draft" && !i.example && i.date) { ys.add(i.date.slice(0, 4)); ms.add(i.date.slice(0, 7)); }
+  return { years: [...ys].sort().reverse(), months: [...ms].sort().reverse() };
+}
+async function downloadZip(period) {
+  if (typeof PDFLib === "undefined" || typeof fontkit === "undefined") { toast("PDF bibliotēka nav ielādējusies. Pārlādē lapu."); return; }
+  const list = S.invoices.filter(i => i.status !== "draft" && !i.example && i.date && (period === "all" || i.date.startsWith(period)));
+  if (!list.length) { toast("Šajā periodā nav izrakstītu rēķinu (melnraksti netiek iekļauti)"); return; }
+  const files = [];
+  try {
+    for (const inv of list.sort((a, b) => a.date.localeCompare(b.date) || a.number.localeCompare(b.number))) {
+      toast(`Veido PDF ${files.length + 1}/${list.length}…`);
+      const [yy, mm] = inv.date.split("-");
+      files.push({ name: `${yy}/${mm} ${MONTHS[Number(mm) - 1]}/Rekins_${inv.number.replace(/[^\w.-]+/g, "_")}.pdf`, data: await buildPdfBytes(inv) });
+    }
+    await saveFile(period === "all" ? "Rekini_visi.zip" : `Rekini_${period}.zip`, makeZip(files));
+    toast(`ZIP gatavs: ${files.length} rēķini`);
+  } catch (e) { console.error(e); toast("ZIP neizdevās izveidot."); }
+}
+
 /* ---------- state ---------- */
 const DEFAULT_SETTINGS = {
   name: 'SIA "SOLIDART"', regNo: "40103952422", vatNo: "", address: "Eduarda Šmita iela 5a, Rīga, LV-1067",
@@ -570,6 +613,7 @@ function listView() {
       <select id="flt" aria-label="Statuss">${[["all", "Visi statusi"], ["draft", "Melnraksti"], ["issued", "Izrakstīti"], ["overdue", "Kavēti"], ["paid", "Apmaksāti"]].map(([v, l]) => `<option value="${v}"${S.filter === v ? " selected" : ""}>${l}</option>`).join("")}</select>
       <input type="text" id="q" placeholder="Meklēt pēc numura vai klienta" value="${esc(S.q)}" style="min-width:0;flex:1;max-width:320px">
     </div>
+    ${(() => { const p = zipPeriods(); return p.years.length ? `<div class="filters"><select id="zip-p" aria-label="Periods ZIP arhīvam"><option value="all">Visi rēķini</option>${p.years.map(y => `<option value="${y}">Gads ${y}</option>`).join("")}${p.months.map(m => `<option value="${m}">${m.slice(0, 4)}. ${MONTHS[Number(m.slice(5)) - 1].toLowerCase()}</option>`).join("")}</select><button class="btn" data-act="zip">Lejupielādēt ZIP</button></div>` : ""; })()}
     <div class="tablewrap">${rows.length ? `<table class="list"><thead><tr><th>Numurs</th><th>Klients</th><th>Datums</th><th>Termiņš</th><th>Statuss</th><th class="r">Summa, EUR</th></tr></thead><tbody>
       ${rows.map(i => { const st = statusOf(i); return `<tr data-open="${i.id}" tabindex="0"><td class="num">${esc(i.number)}${i.example ? ' <span class="pill draft">paraugs</span>' : ""}</td><td>${esc(clientName(i))}</td><td class="num">${fmtDate(i.date)}</td><td class="num">${fmtDate(i.due)}</td><td><span class="pill ${st}">${STATUS[st]}</span></td><td class="r num">${money(totals(i, i.seller ? i.seller.vatPayer : vp).total)}</td></tr>`; }).join("")}
       </tbody></table>` : `<div class="empty">${S.invoices.length ? "Neviens rēķins neatbilst filtram." : "Vēl nav neviena rēķina. Spied <b>Jauns rēķins</b>, lai izrakstītu pirmo."}</div>`}</div>
@@ -695,6 +739,7 @@ document.addEventListener("click", async e => {
   const b = e.target.closest("[data-act]"); if (!b) return;
   const act = b.dataset.act; const inv = S.editing;
   if (act === "goto") { S.tab = b.dataset.tab; S.editing = null; render(); }
+  else if (act === "zip") { b.disabled = true; const t = b.textContent; b.textContent = "Veido ZIP…"; await downloadZip($("#zip-p").value); b.disabled = false; b.textContent = t; }
   else if (act === "new") { S.editing = newInvoice(); S.confirmDel = false; render(); }
   else if (act === "back") { S.editing = null; S.confirmDel = false; render(); }
   else if (act === "add-item") { inv.items.push({ desc: "", qty: 1, unit: "gab.", price: 0, vat: S.settings.defaultVat }); render(); $(`#it-desc-${inv.items.length - 1}`)?.focus(); }
