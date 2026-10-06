@@ -90,6 +90,21 @@ function makeZip(files) {
 
 const S = { sort: { k: "date", d: -1 }, tab: "bank", invoices: [], ok: false, period: "all", q: "" };
 const fname = i => `Rekins_${String(i.number).replace(/[^\w.-]+/g, "_")}.pdf`;
+
+function previewPdf(title, getBlob, dlName) {
+  const old = document.getElementById("pdfpv"); if (old) old.remove();
+  const el = document.createElement("div"); el.id = "pdfpv";
+  el.style.cssText = "position:fixed;inset:0;z-index:250;background:rgba(0,0,0,.8);display:grid;grid-template-rows:auto 1fr;gap:8px;padding:12px";
+  el.innerHTML = '<div style="display:flex;gap:8px;align-items:center;color:#fff"><span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span><button type="button" data-d style="padding:7px 12px;background:#fff;color:#18201e;border:0;border-radius:6px;cursor:pointer">Lejupielādēt</button><button type="button" data-x aria-label="Aizvērt" style="padding:7px 12px;background:#fff;color:#18201e;border:0;border-radius:6px;cursor:pointer">✕</button></div><div style="min-height:0;display:grid"><p style="color:#fff">Ielādē…</p></div>';
+  el.firstChild.firstChild.textContent = title; document.body.appendChild(el);
+  let url = null, blob = null;
+  const close = () => { el.remove(); if (url) URL.revokeObjectURL(url); document.removeEventListener("keydown", key); }; const key = e => { if (e.key === "Escape") close(); };
+  document.addEventListener("keydown", key);
+  el.querySelector("[data-x]").onclick = close;
+  el.querySelector("[data-d]").onclick = () => { if (!blob) return; const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = dlName || "dokuments.pdf"; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000); };
+  Promise.resolve(getBlob()).then(b => { if (!document.body.contains(el)) return; blob = new Blob([b], { type: "application/pdf" }); url = URL.createObjectURL(blob); const box = el.lastChild; box.innerHTML = ""; const f = document.createElement("iframe"); f.src = url; f.title = title; f.style.cssText = "width:100%;height:100%;border:0;background:#fff;border-radius:6px"; box.appendChild(f); })
+    .catch(e => { const p = el.lastChild.firstChild; if (p) p.textContent = "Neizdevās ielādēt PDF: " + e.message; });
+}
 function save(name, blob) { const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000); }
 function periods() { const y = new Set(), m = new Set(); for (const i of S.invoices) if (i.date) { y.add(i.date.slice(0, 4)); m.add(i.date.slice(0, 7)); } return { years: [...y].sort(), months: [...m].sort() }; }
 const inPeriod = i => S.period === "all" || (i.date || "").startsWith(S.period);
@@ -103,7 +118,7 @@ function invoicesView() {
       <button class="btn" data-act="zip"${rows.length ? "" : " disabled"}>Lejupielādēt ZIP</button></div>
     <div class="summary"><div><span class="hint">Rēķini</span><b>${rows.length}</b></div><div><span class="hint">Summa</span><b>${money(sum)} €</b></div></div>
     ${rows.length ? `<div class="tablewrap"><table class="list"><thead><tr>${th("number", "Numurs")}${th("client", "Klients")}${th("date", "Datums")}${th("total", "Summa, EUR", "r")}<th></th></tr></thead><tbody>
-      ${rows.map(i => `<tr><td class="num">${esc(i.number)}</td><td>${esc(i.client || "—")}</td><td class="num">${fmtDate(i.date)}</td><td class="r num">${money(i.total)}</td><td class="r"><button class="btn sm" data-pdf="${esc(i.id)}">PDF</button></td></tr>`).join("")}
+      ${rows.map(i => `<tr><td class="num">${esc(i.number)}</td><td>${esc(i.client || "—")}</td><td class="num">${fmtDate(i.date)}</td><td class="r num">${money(i.total)}</td><td class="r"><button class="btn sm" data-view="${esc(i.id)}">Skatīt</button> <button class="btn sm" data-pdf="${esc(i.id)}">PDF</button></td></tr>`).join("")}
     </tbody></table></div>` : `<div class="empty">${S.invoices.length ? "Nekas neatbilst filtram." : "Vēl nav neviena izrakstīta rēķina grāmatvedim."}</div>`}
   </section>`;
 }
@@ -118,6 +133,7 @@ function render() {
 document.addEventListener("click", async e => {
   const tb = e.target.closest("nav button"); if (tb) { S.tab = tb.dataset.tab; render(); return; }
   const so = e.target.closest("th[data-sort]"); if (so) { const k = so.dataset.sort; S.sort = { k, d: S.sort.k === k ? -S.sort.d : (k === "date" || k === "total" ? -1 : 1) }; render(); return; }
+  const vw = e.target.closest("[data-view]"); if (vw) { const i = S.invoices.find(x => x.id === vw.dataset.view); if (i) previewPdf("Rēķins " + i.number, async () => await (await srv("acc/invoices/" + encodeURIComponent(i.id))).arrayBuffer(), fname(i)); return; }
   const pd = e.target.closest("[data-pdf]");
   try {
     if (pd) { const i = S.invoices.find(x => x.id === pd.dataset.pdf); save(fname(i), await (await srv("acc/invoices/" + i.id)).blob()); return; }

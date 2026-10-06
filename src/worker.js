@@ -11,7 +11,8 @@ async function eq(a, b) {
 }
 
 async function api(request, env0, parts) {
-  const env = { ...env0, APP_TOKEN: env0.APP_TOKEN || env0.app_token, DB: env0.DB || env0.db, RECEIPTS_TOKEN: env0.RECEIPTS_TOKEN || env0.receipts_token, ACCOUNTANT_TOKEN: env0.ACCOUNTANT_TOKEN || env0.accountant_token };
+  const pick = n => { if (env0[n] != null) return env0[n]; const k = Object.keys(env0).find(x => x.toLowerCase() === n.toLowerCase()); return k ? env0[k] : undefined; };
+  const env = { ...env0, APP_TOKEN: pick("APP_TOKEN"), DB: pick("DB"), RECEIPTS_TOKEN: pick("RECEIPTS_TOKEN"), ACCOUNTANT_TOKEN: pick("ACCOUNTANT_TOKEN") };
   const m = request.method;
   if (parts[0] === "ping") return J({ ok: true, configured: !!(env.DB && env.APP_TOKEN), db: !!env.DB, token: !!env.APP_TOKEN, receiptsLocked: !!env.RECEIPTS_TOKEN, accountant: !!env.ACCOUNTANT_TOKEN });
   if (!env.DB) return J({ error: "D1 datubāze nav piesaistīta (binding DB)" }, 500);
