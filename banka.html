@@ -308,7 +308,7 @@ function monthView() {
       <span style="flex:1"></span>
       <button class="btn" data-act="csv">Atskaite (CSV)</button>
       <button class="btn" data-act="zip"${have ? "" : " disabled"}>Lejupielādēt čekus (ZIP)</button>
-      <button class="btn danger" data-act="del-month">Dzēst šo izrakstu</button>
+      ${ACC ? "" : `<button class="btn danger" data-act="del-month">Dzēst šo izrakstu</button>`}
     </div>
     ${rows.length ? `<div class="tablewrap"><table class="list"><thead><tr>${th("date", "Datums")}${th("name", "Saņēmējs / apraksts")}${th("amount", "Summa, EUR", "r")}${th("st", "Čeks / rēķins")}<th></th></tr></thead><tbody>
     ${rows.map(t => {
@@ -445,7 +445,7 @@ document.addEventListener("click", async e => {
     if (act === "pick") $("#f-bank").click();
     else if (act === "csv") csvReport();
     else if (act === "zip") await zipMonth();
-    else if (act === "del-month" && b) {
+    else if (act === "del-month" && b && !ACC) {
       if (!confirm(`Dzēst ${monthName(S.month)} bankas izrakstu?`)) return;
       await srv("acc/bank/" + S.month, { method: "DELETE" }); await reload(); render();
     }

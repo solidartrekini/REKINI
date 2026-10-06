@@ -189,7 +189,7 @@ async function accountant(request, env, parts) {
         await env.DB.prepare("INSERT INTO bank (id, data) VALUES (?1, ?2) ON CONFLICT(id) DO UPDATE SET data = ?2").bind(id, body).run();
         return J({ ok: true });
       }
-      if (m === "DELETE") { await env.DB.prepare("DELETE FROM bank WHERE id = ?1").bind(id).run(); return J({ ok: true }); }
+      if (m === "DELETE") { if (!admin) return J({ error: "Grāmatvedis nedrīkst dzēst" }, 403); await env.DB.prepare("DELETE FROM bank WHERE id = ?1").bind(id).run(); return J({ ok: true }); }
     }
   }
   return J({ error: "Nav atrasts" }, 404);
