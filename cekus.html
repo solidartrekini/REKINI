@@ -96,7 +96,9 @@ const money = n => new Intl.NumberFormat("lv-LV", { minimumFractionDigits: 2, ma
 const pad = n => String(n).padStart(2, "0");
 const isoDate = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 const today = () => isoDate(new Date());
-const fmtDate = s => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s || ""); return m ? `${m[3]}.${m[2]}.${m[1]}` : "—"; };
+const fmtDate = s => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s || ""); return m ? `${m[3]}/${m[2]}/${m[1]}` : "—"; };
+const toDmy = s => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s || ""); return m ? `${m[3]}/${m[2]}/${m[1]}` : ""; };
+const fromDmy = t => { const m = /^\s*(\d{1,2})\s*[./-]\s*(\d{1,2})\s*[./-]\s*(\d{4})\s*$/.exec(t || ""); if (!m) return ""; const d = +m[1], mo = +m[2], y = +m[3], dt = new Date(y, mo - 1, d); return dt.getFullYear() === y && dt.getMonth() === mo - 1 && dt.getDate() === d ? `${y}-${pad(mo)}-${pad(d)}` : ""; };
 const MONTHS = ["janvāris", "februāris", "marts", "aprīlis", "maijs", "jūnijs", "jūlijs", "augusts", "septembris", "oktobris", "novembris", "decembris"];
 const AUTHORS = ["Haralds", "Raimonds"];
 const getAuthor = () => { try { const a = localStorage.getItem("rr-author"); if (AUTHORS.includes(a)) return a; } catch (e) {} return AUTHORS[0]; };
@@ -289,7 +291,7 @@ async function downloadZip(period) {
         files.push({ name: nm, data: new Uint8Array(await blob.arrayBuffer()) }); names.push(nm);
       }
       const sh = r.shop || {};
-      csv.push([d, r.author, sh.name, sh.regNo, sh.vatNo, sh.address, r.pay, r.vat ?? "", r.total ?? "", r.note, names.join(" | "), r.text].map(q).join(";"));
+      csv.push([toDmy(d), r.author, sh.name, sh.regNo, sh.vatNo, sh.address, r.pay, r.vat ?? "", r.total ?? "", r.note, names.join(" | "), r.text].map(q).join(";"));
     }
     files.push({ name: "Ceki.csv", data: enc.encode("\ufeff" + csv.join("\r\n")) });
     const a = document.createElement("a"); a.href = URL.createObjectURL(makeZip(files));
@@ -316,14 +318,45 @@ function parseVat(lines, total) {
   for (const l of lines) if (/pvn|vat/i.test(l) && !/bez\s*pvn/i.test(l)) for (const a of amounts(l)) if (a < total && exp.some(e => Math.abs(e - a) <= 0.02)) return a;
   return null;
 }
-function parseDate(lines) {
-  const ok = (d, m, y) => { if (y < 100) y += 2000; const dt = new Date(y, m - 1, d); return dt.getFullYear() === y && dt.getMonth() === m - 1 && dt.getDate() === d && y >= 2000 && dt <= new Date(Date.now() + 864e5 * 2) ? `${y}-${pad(m)}-${pad(d)}` : null; };
-  const found = [];
-  for (const l of lines) {
-    for (const m of l.matchAll(/(?<!\d)(\d{1,2})\s*[./-]\s*(\d{1,2})\s*[./-]\s*(\d{4}|\d{2})(?!\d)/g)) { const v = ok(+m[1], +m[2], +m[3]); if (v) found.push({ v, k: /dat|date|laiks|time/i.test(l) }); }
-    for (const m of l.matchAll(/(?<!\d)(\d{4})\s*[./-]\s*(\d{1,2})\s*[./-]\s*(\d{1,2})(?!\d)/g)) { const v = ok(+m[3], +m[2], +m[1]); if (v) found.push({ v, k: /dat|date|laiks|time/i.test(l) }); }
-  }
-  return (found.find(f => f.k) || found[0] || {}).v || null;
+const MON = { jan: 1, janv: 1, feb: 2, febr: 2, mar: 3, marts: 3, apr: 4, apr\u012bl: 4, mai: 5, maijs: 5, jun: 6, j\u016bn: 6, jul: 7, j\u016bl: 7, aug: 8, sep: 9, sept: 9, okt: 10, oct: 10, nov: 11, dec: 12 };
+function monthNo(w) { w = w.toLowerCase().normalize("NFC").replace(/\.$/, ""); if (MON[w]) return MON[w]; const k = Object.keys(MON).filter(x => x.length >= 3 && w.startsWith(x)).sort((a, b) => b.length - a.length)[0]; return k ? MON[k] : 0; }
+/* Datuma noteikšana: kandidāti no visa teksta, katram punkti pēc konteksta; izvēlas labāko.
+   hint = foto datums (ISO) palīdz izvēlēties starp vairākiem datumiem. */
+function parseDate(lines, hint) {
+  const now = new Date(), hintD = hint ? new Date(hint + "T12:00:00") : null;
+  const valid = (d, m, y) => { const dt = new Date(y, m - 1, d); return y >= 2010 && dt.getFullYear() === y && dt.getMonth() === m - 1 && dt.getDate() === d && dt <= new Date(now.getTime() + 864e5 * 2); };
+  const iso = (d, m, y) => `${y}-${pad(m)}-${pad(d)}`;
+  const GOOD = /dat[uū]ms|date|laiks|time|izdots|[cč]eks|kvits|rēķins|pirkuma|darījum|transakc|receipt|tirdzniec/i;
+  const BAD = /der[iī]g|l[iī]dz\b|termi[nņ]|garanti|expir|valid|until|due|apmaksas\s*termi|dzim|piegād|piegad|delivery|nodošan/i;
+  const cands = [];
+  const push = (d, m, y, line, twoDigit, pos) => {
+    if (twoDigit) y += 2000;
+    if (!valid(d, m, y)) { if (!twoDigit && m > 12 && d <= 12 && valid(m, d, y)) { [d, m] = [m, d]; } else return; }
+    let sc = 0;
+    if (/\d{1,2}\s*[:.]\s*\d{2}(\s*[:.]\s*\d{2})?\s*(am|pm)?(?!\d)/i.test(line.replace(/\d{1,2}\s*[./-]\s*\d{1,2}\s*[./-]\s*\d{2,4}/, ""))) sc += 4;
+    if (GOOD.test(line)) sc += 4;
+    if (BAD.test(line)) sc -= 8;
+    if (twoDigit) sc -= 3;
+    const iv = iso(d, m, y), dt = new Date(iv + "T12:00:00");
+    if (hintD) { const diff = (hintD - dt) / 864e5; if (diff >= -2 && diff <= 400) sc += diff <= 7 ? 3 : 1; else if (diff < -2) sc -= 6; }
+    cands.push({ v: iv, sc, pos });
+  };
+  // O/I/l OCR kļūdas ciparu grupās
+  const fix = l => l.replace(/(?<![\p{L}\d])[0-9OoIl]{1,4}(?=\s*[./-]\s*[0-9OoIl]{1,2}\s*[./-]\s*[0-9OoIl]{2,4}(?![\p{L}\d]))/gu, t => t.replace(/[Oo]/g, "0").replace(/[Il]/g, "1"))
+                       .replace(/(?<=[./-]\s*)[0-9OoIl]{1,4}(?![\p{L}\d])/gu, t => /\d/.test(t) || /^[OoIl]+$/.test(t) ? t.replace(/[Oo]/g, "0").replace(/[Il]/g, "1") : t);
+  lines.forEach((raw, li) => {
+    const l = fix(raw);
+    for (const m of l.matchAll(/(?<!\d)(\d{1,2})\s*[./-]\s*(\d{1,2})\s*[./-]\s*(\d{4})(?!\d)/g)) push(+m[1], +m[2], +m[3], l, false, li);
+    for (const m of l.matchAll(/(?<!\d)(\d{1,2})\s*[./-]\s*(\d{1,2})\s*[./-]\s*(\d{2})(?![\d:])(?![./-]\d)/g)) push(+m[1], +m[2], +m[3], l, true, li);
+    for (const m of l.matchAll(/(?<!\d)(\d{4})\s*[./-]\s*(\d{1,2})\s*[./-]\s*(\d{1,2})(?!\d)/g)) push(+m[3], +m[2], +m[1], l, false, li);
+    for (const m of l.matchAll(/(?<!\d)(\d{1,2})\.?\s+(\p{L}{3,10})\.?,?\s+(\d{4})(?!\d)/gu)) { const mo = monthNo(m[2]); if (mo) push(+m[1], mo, +m[3], l, false, li); }
+    for (const m of l.matchAll(/(\p{L}{3,10})\.?\s+(\d{1,2}),?\s+(\d{4})(?!\d)/gu)) { const mo = monthNo(m[1]); if (mo) push(+m[2], mo, +m[3], l, false, li); }
+  });
+  if (!cands.length) return null;
+  cands.sort((a, b) => b.sc - a.sc || a.pos - b.pos);
+  const best = cands[0];
+  if (best.sc < -2) return null;          // tikai "slikti" konteksta datumi: nesaki neko
+  return best.v;
 }
 function parseShop(lines) {
   let regNo = "";
@@ -334,10 +367,10 @@ function parseShop(lines) {
   if (!name) name = (lines.slice(0, 5).find(l => (l.match(/\p{L}/gu) || []).length >= 4) || "").replace(/^[^\p{L}]+|[^\p{L}\p{N}.)]+$/gu, "").trim();
   return { regNo, name };
 }
-function parseReceipt(text) {
+function parseReceipt(text, hint) {
   const lines = (text || "").split(/\n/).map(l => l.trim()).filter(Boolean);
   const total = parseTotal(lines);
-  return { total, vat: parseVat(lines, total), date: parseDate(lines), ...parseShop(lines) };
+  return { total, vat: parseVat(lines, total), date: parseDate(lines, hint), ...parseShop(lines) };
 }
 async function lookupShop(info) {
   await urLoad(); if (UR.state !== "ready") return null;
@@ -348,7 +381,7 @@ async function lookupShop(info) {
 }
 /* aizpilda tikai tukšos vērtības; datumu aizstāj tikai, ja tas nav ievadīts pašrocīgi */
 async function autoFill(rec) {
-  const info = parseReceipt(rec.text); if (!info.total && !info.date && !info.name && !info.regNo) return [];
+  const info = parseReceipt(rec.text, rec.photoDate); if (!info.total && !info.date && !info.name && !info.regNo) return [];
   const got = [];
   rec.shop = rec.shop || {};
   if (info.total && (rec.total == null || rec.total === "")) { rec.total = info.total; got.push("summa"); }
@@ -365,7 +398,7 @@ function applyToForm(rec) {
   if (!S.cur || S.cur.id !== rec.id) return;
   const set = (id, v, force) => { const el = $(id); if (el && v != null && v !== "" && (force || !el.value)) el.value = v; };
   set("#r-total", rec.total); set("#r-vat", rec.vat); set("#r-name", (rec.shop || {}).name); set("#r-regNo", (rec.shop || {}).regNo); set("#r-address", (rec.shop || {}).address);
-  if (rec.dateSrc === "ocr") set("#r-date", rec.date, true);
+  if (rec.dateSrc === "ocr") set("#r-date", toDmy(rec.date), true);
   const h = $("#auto-note"); if (h) h.textContent = rec.auto && rec.auto.length ? "Automātiski noteikts: " + rec.auto.join(", ") + ". Pārbaudi un labo, ja vajag." : "";
 }
 
@@ -434,7 +467,7 @@ function detailView() {
       <div class="panel">
         <div class="grid">
           <label class="f">Autors<select id="r-author">${AUTHORS.map(a => `<option${r.author === a ? " selected" : ""}>${a}</option>`).join("")}${r.author && !AUTHORS.includes(r.author) ? `<option selected>${esc(r.author)}</option>` : ""}${r.author ? "" : `<option value="" selected></option>`}</select></label>
-          <label class="f">Datums<input type="date" id="r-date" value="${esc(r.date || "")}"></label>
+          <label class="f">Datums (DD/MM/YYYY)<input type="text" id="r-date" inputmode="numeric" placeholder="DD/MM/YYYY" maxlength="10" value="${esc(toDmy(r.date))}"></label>
           <label class="f">Summa, EUR<input type="number" id="r-total" step="0.01" inputmode="decimal" value="${r.total ?? ""}"></label>
           <label class="f">No tās PVN, EUR (nav obligāti)<input type="number" id="r-vat" step="0.01" inputmode="decimal" value="${r.vat ?? ""}"></label>
           <label class="f">Apmaksas veids<select id="r-pay"><option value=""></option>${PAY.map(p => `<option${r.pay === p ? " selected" : ""}>${p}</option>`).join("")}</select></label>
@@ -561,7 +594,7 @@ async function addFiles(files, opts = {}) {
       const hash = await hashFile(f);
       if (hash) { const d = await store.dup(hash, "", ""); if ((d.hash || S.list.some(r => (r.hashes || []).includes(hash))) && (opts.quiet ? (skipped++, true) : !confirm(`Fails "${f.name}" jau ir saglabāts kā čeks. Pievienot tāpat?`))) continue; }
       const { items, date, text } = await prepFile(f);
-      const rec = { id: uid(), createdAt: Date.now(), date, author: getAuthor(), shop: {}, total: null, thumb: items[0].thumb, pages: [], hashes: hash ? [hash] : [] };
+      const rec = { id: uid(), createdAt: Date.now(), date, photoDate: date, author: getAuthor(), shop: {}, total: null, thumb: items[0].thumb, pages: [], hashes: hash ? [hash] : [] };
       for (const [i, it] of items.entries()) rec.pages.push({ id: i === 0 ? rec.id : uid(), thumb: it.thumb });
       await store.put(rec);
       for (const [i, it] of items.entries()) await store.putImg(rec.pages[i].id, it.big, rec.id);
@@ -603,7 +636,7 @@ async function addPages(files) {
 }
 function readForm() {
   const r = S.cur, num = id => { const v = $(id).value.trim().replace(",", "."); return v === "" ? null : Number(v); };
-  r.author = $("#r-author").value; { const nd = $("#r-date").value; if (nd && nd !== r.date) r.dateSrc = "manual"; r.date = nd || r.date; } r.total = num("#r-total"); r.vat = num("#r-vat"); r.pay = $("#r-pay").value; r.note = $("#r-note").value.trim(); r.text = $("#r-text").value;
+  r.author = $("#r-author").value; { const raw = $("#r-date").value.trim(), nd = fromDmy(raw); readForm.bad = !!(raw && !nd); if (readForm.bad) toast("Datums jāievada kā DD/MM/YYYY, piemēram, 31/12/2025"); if (nd && nd !== r.date) r.dateSrc = "manual"; r.date = nd || r.date; } r.total = num("#r-total"); r.vat = num("#r-vat"); r.pay = $("#r-pay").value; r.note = $("#r-note").value.trim(); r.text = $("#r-text").value;
   r.shop = { name: $("#r-name").value.trim(), regNo: $("#r-regNo").value.trim(), vatNo: $("#r-vatNo").value.trim(), address: $("#r-address").value.trim() };
 }
 document.addEventListener("click", async e => {
@@ -649,7 +682,7 @@ document.addEventListener("click", async e => {
     catch (err) { toast("Neizdevās nolasīt bildes: " + err.message); }
   }
   else if (act === "save") {
-    readForm(); b.disabled = true;
+    readForm(); if (readForm.bad) return; b.disabled = true;
     try { await checkDup(S.cur); await store.put(S.cur); toast("Saglabāts"); } catch (err) { toast("Neizdevās saglabāt: " + err.message); }
     b.disabled = false;
   }
