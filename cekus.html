@@ -85,6 +85,7 @@ input[type=file] { display: none }
 </div></header>
 <main class="wrap" id="app"></main>
 <div class="toast" id="toast" hidden role="status"></div>
+<input type="file" id="f-zip" accept=".zip,application/zip,application/x-zip-compressed">
 <input type="file" id="f-cam" accept="image/*" capture="environment">
 <input type="file" id="f-file" accept="image/*,application/pdf,.pdf" multiple>
 <script>
@@ -394,6 +395,7 @@ function listView() {
     <div class="row">
       <button class="btn big primary" data-act="cam">Uzņemt čeka foto</button>
       <button class="btn big" data-act="file">Augšupielādēt bildi vai PDF</button>
+      ${ADMIN ? `<button class="btn big" data-act="zipin">Pievienot .zip</button>` : ""}
     </div>
     ${S.busy ? `<p class="hint">${esc(S.busy)}</p>` : ""}
     ${OCR.busy ? `<p class="hint">Atpazīst tekstu čekiem (${OCR.busy})… Pirmoreiz tiek ielādēti valodas dati, tas var aizņemt kādu brīdi.</p>` : ""}
@@ -518,27 +520,59 @@ async function prepFile(file, maxPages = MAXP) {
   if (isPdf(file)) return prepPdf(file, maxPages);
   const { big, thumb, date } = await prepImage(file); return { items: [{ big, thumb }], date, text: "" };
 }
-async function addFiles(files) {
+/* ZIP nolasīšana (stored un deflate) bez ārējām bibliotēkām */
+async function unzip(file) {
+  const buf = await file.arrayBuffer(), v = new DataView(buf), u8 = new Uint8Array(buf), dec = new TextDecoder();
+  let e = -1; for (let i = buf.byteLength - 22; i >= Math.max(0, buf.byteLength - 70000); i--) if (v.getUint32(i, true) === 0x06054b50) { e = i; break; }
+  if (e < 0) throw new Error("Nav derīgs ZIP fails");
+  const count = v.getUint16(e + 10, true); let o = v.getUint32(e + 16, true); const out = [];
+  for (let i = 0; i < count; i++) {
+    if (v.getUint32(o, true) !== 0x02014b50) break;
+    const method = v.getUint16(o + 10, true), t = v.getUint16(o + 12, true), d = v.getUint16(o + 14, true), csz = v.getUint32(o + 20, true), nl = v.getUint16(o + 28, true), xl = v.getUint16(o + 30, true), cl = v.getUint16(o + 32, true), lo = v.getUint32(o + 42, true);
+    const name = dec.decode(u8.subarray(o + 46, o + 46 + nl)); o += 46 + nl + xl + cl;
+    if (name.endsWith("/") || /(^|\/)(__MACOSX|\.DS_Store)/.test(name)) continue;
+    const start = lo + 30 + v.getUint16(lo + 26, true) + v.getUint16(lo + 28, true), raw = u8.subarray(start, start + csz);
+    let data;
+    if (method === 0) data = raw;
+    else if (method === 8) data = new Uint8Array(await new Response(new Blob([raw]).stream().pipeThrough(new DecompressionStream("deflate-raw"))).arrayBuffer());
+    else continue;
+    out.push({ name, data, date: new Date(((d >> 9) & 127) + 1980, ((d >> 5) & 15) - 1, d & 31, t >> 11, (t >> 5) & 63) });
+  }
+  return out;
+}
+const MIME = { jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", webp: "image/webp", heic: "image/heic", heif: "image/heif", pdf: "application/pdf" };
+async function importZip(file) {
+  S.busy = "Atver ZIP…"; render();
+  try {
+    const ents = (await unzip(file)).filter(x => MIME[(x.name.split(".").pop() || "").toLowerCase()]);
+    if (!ents.length) { S.busy = ""; render(); toast("ZIP arhīvā nav bilžu vai PDF failu"); return; }
+    if (ents.length > 200) toast("Ielādēs pirmos 200 failus no " + ents.length);
+    const files = ents.slice(0, 200).map(x => new File([x.data], x.name.split("/").pop(), { type: MIME[x.name.split(".").pop().toLowerCase()], lastModified: x.date.getTime() }));
+    await addFiles(files, { quiet: true });
+  } catch (e) { console.warn(e); S.busy = ""; render(); toast("ZIP neizdevās atvērt: " + e.message); }
+}
+async function addFiles(files, opts = {}) {
   files = [...files].filter(isOk);
   if (!files.length) { toast("Izvēlies bildes vai PDF failu"); return; }
-  let last = null, n = 0;
+  let last = null, n = 0, skipped = 0, added = 0;
   for (const f of files) {
     S.busy = `Saglabā ${++n}/${files.length}…`; render();
     try {
       const hash = await hashFile(f);
-      if (hash) { const d = await store.dup(hash, "", ""); if ((d.hash || S.list.some(r => (r.hashes || []).includes(hash))) && !confirm(`Fails "${f.name}" jau ir saglabāts kā čeks. Pievienot tāpat?`)) continue; }
+      if (hash) { const d = await store.dup(hash, "", ""); if ((d.hash || S.list.some(r => (r.hashes || []).includes(hash))) && (opts.quiet ? (skipped++, true) : !confirm(`Fails "${f.name}" jau ir saglabāts kā čeks. Pievienot tāpat?`))) continue; }
       const { items, date, text } = await prepFile(f);
       const rec = { id: uid(), createdAt: Date.now(), date, author: getAuthor(), shop: {}, total: null, thumb: items[0].thumb, pages: [], hashes: hash ? [hash] : [] };
       for (const [i, it] of items.entries()) rec.pages.push({ id: i === 0 ? rec.id : uid(), thumb: it.thumb });
       await store.put(rec);
       for (const [i, it] of items.entries()) await store.putImg(rec.pages[i].id, it.big, rec.id);
       if (text) { rec.text = text; await autoFill(rec); await checkDup(rec); await store.put(rec); }
-      S.list.push(rec); last = rec;
+      S.list.push(rec); last = rec; added++;
       if (!text) ocrRun(rec, items.map(i => i.big));
     } catch (e) { console.warn(e); toast("Neizdevās saglabāt: " + e.message); }
   }
   S.busy = "";
-  if (last) { S.cur = last; S.page = 0; S.confirmDel = false; toast(files.length > 1 ? "Čeki saglabāti" : "Čeks saglabāts. Papildini datus."); }
+  if (opts.quiet) toast(`Pievienoti ${added} čeki` + (skipped ? `, izlaisti dublikāti: ${skipped}` : "") + ". Teksta atpazīšana turpinās fonā.");
+  else if (last) { S.cur = last; S.page = 0; S.confirmDel = false; toast(files.length > 1 ? "Čeki saglabāti" : "Čeks saglabāts. Papildini datus."); }
   render();
 }
 async function addPages(files) {
@@ -579,6 +613,7 @@ document.addEventListener("click", async e => {
   const act = b.dataset.act;
   if (act === "cam") $("#f-cam").click();
   else if (act === "file") $("#f-file").click();
+  else if (act === "zipin" && ADMIN) $("#f-zip").click();
   else if (act === "zip") { b.disabled = true; const t = b.textContent; b.textContent = "Veido ZIP…"; await downloadZip($("#zip-p").value); b.disabled = false; b.textContent = t; }
   else if (act === "pcam") { S.adding = true; $("#f-cam").click(); }
   else if (act === "pfile") { S.adding = true; $("#f-file").click(); }
@@ -619,6 +654,7 @@ document.addEventListener("click", async e => {
     b.disabled = false;
   }
 });
+$("#f-zip").addEventListener("change", e => { const f = e.target.files && e.target.files[0]; e.target.value = ""; if (f && ADMIN) importZip(f); });
 for (const id of ["#f-cam", "#f-file"]) $(id).addEventListener("change", e => { const fs = e.target.files; if (fs && fs.length) { if (S.adding && S.cur) addPages(fs); else addFiles(fs); } S.adding = false; e.target.value = ""; });
 document.addEventListener("change", e => { if (e.target.id === "f-author") { try { localStorage.setItem("rr-author", e.target.value); } catch (x) {} return; } if (e.target.id === "f-fa") { S.fa = e.target.value; render(); return; } if (e.target.id === "f-month") { S.month = e.target.value; render(); } });
 document.addEventListener("input", e => {
