@@ -116,6 +116,7 @@ function invoicesView() {
     <div class="row"><select id="inv-p" aria-label="Periods"><option value="all">Visi rēķini</option>${p.years.map(y => `<option value="${y}"${S.period === y ? " selected" : ""}>Gads ${y}</option>`).join("")}${p.months.map(m => `<option value="${m}"${S.period === m ? " selected" : ""}>${m.slice(0, 4)}. ${MONTHS[Number(m.slice(5)) - 1]}</option>`).join("")}</select>
       <input type="text" id="inv-q" placeholder="Meklēt pēc numura vai klienta" value="${esc(S.q)}">
       <button class="btn" data-act="zip"${rows.length ? "" : " disabled"}>Lejupielādēt ZIP</button></div>
+    <div style="display:grid;gap:6px;margin:8px 0">${p.months.slice().reverse().map(m => `<div class="row" style="gap:8px;align-items:center"><b style="min-width:140px">${m.slice(0, 4)}. ${MONTHS[Number(m.slice(5)) - 1]}</b><span class="hint" style="flex:1">${S.invoices.filter(i => (i.date || "").startsWith(m)).length} rēķini</span><button class="btn sm" data-zipm="${m}">Lejupielādēt .zip</button></div>`).join("")}</div>
     <div class="summary"><div><span class="hint">Rēķini</span><b>${rows.length}</b></div><div><span class="hint">Summa</span><b>${money(sum)} €</b></div></div>
     ${rows.length ? `<div class="tablewrap"><table class="list"><thead><tr>${th("number", "Numurs")}${th("client", "Klients")}${th("date", "Datums")}${th("total", "Summa, EUR", "r")}<th></th></tr></thead><tbody>
       ${rows.map(i => `<tr><td class="num">${esc(i.number)}</td><td>${esc(i.client || "—")}</td><td class="num">${fmtDate(i.date)}</td><td class="r num">${money(i.total)}</td><td class="r"><button class="btn sm" data-view="${esc(i.id)}">Skatīt</button> <button class="btn sm" data-pdf="${esc(i.id)}">PDF</button></td></tr>`).join("")}
@@ -137,15 +138,17 @@ document.addEventListener("click", async e => {
   const pd = e.target.closest("[data-pdf]");
   try {
     if (pd) { const i = S.invoices.find(x => x.id === pd.dataset.pdf); save(fname(i), await (await srv("acc/invoices/" + i.id)).blob()); return; }
-    const z = e.target.closest("[data-act=zip]");
+    const zm = e.target.closest("[data-zipm]");
+    const z = zm || e.target.closest("[data-act=zip]");
     if (z) {
-      const list = S.invoices.filter(inPeriod); if (!list.length) return; z.disabled = true; const files = [];
+      const per = zm ? zm.dataset.zipm : S.period;
+      const list = S.invoices.filter(i => per === "all" || (i.date || "").startsWith(per)); if (!list.length) return; z.disabled = true; const files = [];
       for (const i of list.sort((a, b) => (a.date || "").localeCompare(b.date || ""))) {
         toast(`Ielādē PDF ${files.length + 1}/${list.length}…`);
         const [yy, mm] = (i.date || "0000-00").split("-");
         files.push({ name: `${yy}/${mm} ${MONTHS[Number(mm) - 1] || ""}/${fname(i)}`, data: new Uint8Array(await (await srv("acc/invoices/" + i.id)).arrayBuffer()) });
       }
-      save(S.period === "all" ? "Rekini_visi.zip" : `Rekini_${S.period}.zip`, makeZip(files)); toast(`ZIP gatavs: ${files.length} rēķini`); z.disabled = false;
+      save(per === "all" ? "Rekini_visi.zip" : `Rekini_${per}.zip`, makeZip(files)); toast(`ZIP gatavs: ${files.length} rēķini`); z.disabled = false;
     }
   } catch (err) { toast("Neizdevās: " + err.message); render(); }
 });
