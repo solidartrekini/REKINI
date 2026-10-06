@@ -224,6 +224,18 @@ const store = {
       try { this.db = await window.claude.use("db"); } catch (e) { this.db = null; }
       if (this.db) this.mode = "db";
     }
+    if (this.mode === "local" && location.protocol.startsWith("http")) {
+      try { const r = await fetch("api/ping", { cache: "no-store" }); const j = r.ok ? await r.json() : null; if (j && j.ok) this.mode = "server"; } catch (e) {}
+    }
+  },
+  tokenKey: "rr-token",
+  async srv(path, opt = {}, retry = true) {
+    let t = ""; try { t = localStorage.getItem(this.tokenKey) || ""; } catch (e) {}
+    if (!t) { t = (prompt("Ievadi rīka piekļuves atslēgu (APP_TOKEN no Cloudflare):") || "").trim(); if (t) try { localStorage.setItem(this.tokenKey, t); } catch (e) {} }
+    const r = await fetch("api/" + path, { ...opt, headers: { Authorization: "Bearer " + t, "Content-Type": "application/json" } });
+    if (r.status === 401) { try { localStorage.removeItem(this.tokenKey); } catch (e) {} if (retry) return this.srv(path, opt, false); throw new Error("Nepareiza piekļuves atslēga"); }
+    if (!r.ok) { let m = ""; try { m = (await r.json()).error; } catch (e) {} throw new Error(m || "Servera kļūda " + r.status); }
+    return r.json();
   },
   async load() {
     if (this.mode === "db") {
@@ -231,6 +243,20 @@ const store = {
         const [s, c, i] = await Promise.all([this.db.doc("config/settings").get(), this.db.collection("clients").get(), this.db.collection("invoices").get()]);
         return { settings: s.exists ? s.data() : null, clients: c.docs.map(d => ({ ...d.data(), id: d.id })), invoices: i.docs.map(d => ({ ...d.data(), id: d.id })) };
       } catch (e) { console.warn("db load failed, using browser storage", e); this.mode = "local"; }
+    }
+    if (this.mode === "server") {
+      try {
+        const d = await this.srv("data");
+        if (!d.settings && !d.clients.length && !d.invoices.length) {
+          let loc = null; try { const raw = localStorage.getItem(LS_KEY); if (raw) { const o = JSON.parse(raw); if (!o.enc) loc = o; } } catch (e) {}
+          if (loc && ((loc.clients || []).length || (loc.invoices || []).length) && confirm("Serverī vēl nav datu, bet šajā pārlūkā ir saglabāti klienti/rēķini. Pārcelt tos uz serveri?")) {
+            if (loc.settings) await this.srv("doc/config/settings", { method: "PUT", body: JSON.stringify(loc.settings) });
+            for (const k of ["clients", "invoices"]) for (const x of loc[k] || []) { const { id, ...rest } = x; await this.srv(`doc/${k}/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(rest) }); }
+            return loc;
+          }
+        }
+        return d;
+      } catch (e) { console.warn("server load failed", e); this.err = e.message; this.mode = "local"; setTimeout(() => toast("Serveris nav pieejams: " + e.message + ". Dati netiek saglabāti serverī!"), 500); }
     }
     try {
       const raw = localStorage.getItem(LS_KEY);
@@ -250,10 +276,11 @@ const store = {
   async put(coll, obj) {
     obj.updatedAt = Date.now(); if (coll === "clients") DRIVE.clientsDirty = true;
     if (this.mode === "db") { const { id, ...rest } = obj; await this.db.collection(coll).doc(id).set(JSON.parse(JSON.stringify(rest))); }
+    else if (this.mode === "server") { const { id, _new, ...rest } = obj; await this.srv(`doc/${coll}/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(rest) }); }
     else this.saveLocal();
   },
-  async del(coll, id) { if (coll === "clients") DRIVE.clientsDirty = true; if (this.mode === "db") await this.db.collection(coll).doc(id).delete(); else this.saveLocal(); },
-  async putSettings(s) { s.updatedAt = Date.now(); if (this.mode === "db") await this.db.doc("config/settings").set(JSON.parse(JSON.stringify(s))); else this.saveLocal(); }
+  async del(coll, id) { if (coll === "clients") DRIVE.clientsDirty = true; if (this.mode === "db") await this.db.collection(coll).doc(id).delete(); else if (this.mode === "server") await this.srv(`doc/${coll}/${encodeURIComponent(id)}`, { method: "DELETE" }); else this.saveLocal(); },
+  async putSettings(s) { s.updatedAt = Date.now(); if (this.mode === "db") await this.db.doc("config/settings").set(JSON.parse(JSON.stringify(s))); else if (this.mode === "server") await this.srv("doc/config/settings", { method: "PUT", body: JSON.stringify(s) }); else this.saveLocal(); }
 };
 
 async function saveFile(filename, blob) {
@@ -1077,7 +1104,7 @@ $("#drive-btn").addEventListener("click", driveConnect);
   S.settings = { ...DEFAULT_SETTINGS, ...(data.settings || {}) };
   for (const k of Object.keys(DEFAULT_SETTINGS)) if (S.settings[k] === "" && DEFAULT_SETTINGS[k] !== "" && typeof DEFAULT_SETTINGS[k] === "string" && !["vatNo", "email", "phone"].includes(k)) S.settings[k] = DEFAULT_SETTINGS[k];
   S.clients = data.clients || []; S.invoices = data.invoices || []; S.loaded = true;
-  $("#store-note").textContent = store.mode === "db" ? "Dati saglabājas tavā kontā" : "Dati saglabājas šajā pārlūkā";
+  $("#store-note").textContent = store.mode === "db" ? "Dati saglabājas tavā kontā" : store.mode === "server" ? "Dati saglabājas serverī (Cloudflare)" : "Dati saglabājas šajā pārlūkā";
   render();
   driveUI(); lockUI(); idleReset();
   driveResume();
