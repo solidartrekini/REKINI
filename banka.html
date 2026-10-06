@@ -127,7 +127,7 @@ const ALIAS = {
 function fromSwedbankPlain(rows) {
   const ok = r => r.length >= 8 && /^\d{2}$/.test(String(r[1]).trim()) && /^\d{1,2}[./-]\d{1,2}[./-]\d{4}$/.test(String(r[2]).trim());
   if (!rows.slice(0, 3).some(ok)) return null;
-  const out = [], own = (S.settings && S.settings.regNo) || "40103952422";
+  const out = [], own = (S.settings && S.settings.regNo) || "40103952422", pd8 = rows.filter(ok).map(r => parseDate(r[2])).filter(Boolean).sort();
   for (const r of rows) {
     if (!ok(r) || String(r[1]).trim() !== "20") continue;
     const date = parseDate(r[2]); let amt = parseAmount(r[5]); if (!date || isNaN(amt)) continue;
@@ -144,6 +144,7 @@ function fromSwedbankPlain(rows) {
     else if (party.includes(own) || /^\d{11}$/.test(party[1] || "") && party[1] === own) t.kind = "Pārvedums starp saviem kontiem";
     out.push(t);
   }
+  if (out.length && pd8.length) out.period = [pd8[0], pd8[pd8.length - 1]];
   return out.length ? out : null;
 }
 function fromCsv(text) {
@@ -202,7 +203,7 @@ function parseStatement(text, filename) {
 const S = { sort: { k: "date", d: 1 }, banks: [], receipts: [], month: "", showIn: false, onlyMiss: false, loaded: false };
 const txKeyBase = t => `${t.date}|${t.amount.toFixed(2)}|${norm(t.name + " " + t.desc).slice(0, 60)}`;
 function withIds(list) { const seen = {}; return list.map(t => { const b = txKeyBase(t); seen[b] = (seen[b] || 0) + 1; return { ...t, id: b + "|" + seen[b] }; }); }
-async function saveStatement(list, filename) {
+async function saveStatement(list, filename, period) {
   const byM = {}; for (const t of withIds(list)) (byM[t.date.slice(0, 7)] ||= []).push(t);
   const months = Object.keys(byM).sort();
   for (const mk of months) {
@@ -210,7 +211,8 @@ async function saveStatement(list, filename) {
     const have = new Map(old.txs.map(t => [t.id, t]));
     for (const t of byM[mk]) have.set(t.id, have.get(t.id) || t);
     const txs = [...have.values()].sort((a, b) => a.date.localeCompare(b.date));
-    const doc = { txs, links: old.links || {}, ignore: old.ignore || {}, file: filename, updatedAt: Date.now() };
+    const per = period || [list.map(t => t.date).sort()[0], list.map(t => t.date).sort().pop()];
+    const doc = { txs, links: old.links || {}, ignore: old.ignore || {}, file: filename, periods: [...(old.periods || []), per], updatedAt: Date.now() };
     await srv("acc/bank/" + mk, { method: "PUT", body: JSON.stringify(doc) });
   }
   return months;
@@ -288,6 +290,30 @@ function monthView() {
     ${rcMonth.length ? `<div class="panel"><h2>Čeki bez bankas maksājuma (${rcMonth.length})</h2><p class="hint">Šie čeki ar ${monthName(S.month)} datumu neatbilst nevienam izraksta maksājumam (piem., apmaksāti skaidrā naudā vai izraksts vēl nav ielādēts).</p>
       <div class="tablewrap"><table class="list" style="min-width:520px"><tbody>${rcMonth.map(r => `<tr><td style="width:56px"><button type="button" class="tn" data-prev="${r.id}" style="background-image:url('${esc(r.thumb || "")}')" aria-label="Priekšskatīt čeku"></button></td><td class="num">${fmtDate(r.date)}</td><td>${esc((r.shop && r.shop.name) || "—")}</td><td>${esc(r.pay || "")}</td><td class="r num">${r.total != null && r.total !== "" ? money(r.total) : "—"}</td></tr>`).join("")}</tbody></table></div></div>` : ""}`;
 }
+const dnum = s => Math.round(Date.parse(s + "T00:00:00Z") / 864e5), dstr = n => new Date(n * 864e5).toISOString().slice(0, 10);
+function coverage() {
+  const iv = [];
+  for (const b of S.banks) {
+    const ps = b.periods && b.periods.length ? b.periods : b.txs.length ? [[b.txs[0].date, b.txs[b.txs.length - 1].date]] : [];
+    for (const [a, z] of ps) if (a && z) iv.push([dnum(a), dnum(z)]);
+  }
+  iv.sort((x, y) => x[0] - y[0]); const m = [];
+  for (const i of iv) { const l = m[m.length - 1]; if (l && i[0] <= l[1] + 1) l[1] = Math.max(l[1], i[1]); else m.push([...i]); }
+  const gaps = [], end = dnum(new Date().toISOString().slice(0, 10)) - 1;
+  for (let k = 0; k < m.length; k++) { const nx = k + 1 < m.length ? m[k + 1][0] - 1 : end; if (nx >= m[k][1] + 1) gaps.push([m[k][1] + 1, nx]); }
+  return { covered: m, gaps };
+}
+const fmtRange = (a, z) => a === z ? fmtDate(dstr(a)) : `${fmtDate(dstr(a))} – ${fmtDate(dstr(z))}`;
+function coverageView() {
+  const { covered, gaps } = coverage();
+  if (!covered.length) return "";
+  const n = ([a, z]) => z - a + 1;
+  return `<div class="panel"><h2>Ielādētie bankas izraksti</h2>
+    <div><span class="eyebrow">Ielādēts</span><div>${covered.map(c => `<span class="pill ok" style="margin:2px 4px 2px 0">${fmtRange(c[0], c[1])}</span>`).join("")}</div></div>
+    ${gaps.length ? `<div><span class="eyebrow">Vēl jāielādē no bankas CSV</span><div>${gaps.map(g => `<span class="pill bad" style="margin:2px 4px 2px 0">${fmtRange(g[0], g[1])} (${n(g)} d.)</span>`).join("")}</div>
+      <p class="hint" style="margin-top:6px">Bankā izvēlies šo periodu, lejupielādē izrakstu CSV formātā un ielādē šeit.</p></div>`
+      : `<p class="hint">Izraksts ir ielādēts līdz vakardienai, trūkstošu datumu nav.</p>`}</div>`;
+}
 function render() {
   const app = $("#app");
   if (!S.loaded) { app.innerHTML = `<section class="view"><p class="hint">Ielādē…</p></section>`; return; }
@@ -296,6 +322,7 @@ function render() {
     <div class="panel"><h2>Augšupielādēt bankas izrakstu</h2>
       <p class="hint">Atbalstīti CSV (piem., Swedbank) un camt.053 XML faili. Ja failā ir vairāki mēneši, izraksts tiek sadalīts pa mēnešiem; atkārtoti ielādēti ieraksti netiek dubultoti.</p>
       <div class="row"><button class="btn primary" data-act="pick">Izvēlēties izraksta failu</button></div></div>
+    ${coverageView()}
     ${months.length ? `<div class="row"><label class="row" style="gap:8px">Mēnesis <select id="m-sel">${months.map(m => `<option value="${m}"${m === S.month ? " selected" : ""}>${monthName(m)}</option>`).join("")}</select></label></div>${monthView()}`
       : `<div class="empty">Vēl nav ielādēts neviens bankas izraksts.</div>`}
   </section>`;
@@ -313,7 +340,7 @@ $("#f-bank").addEventListener("change", async e => {
     toast("Nolasa izrakstu…");
     const list = parseStatement(await readFileText(f), f.name);
     if (!list.length) throw new Error("Failā netika atrasts neviens maksājums");
-    const months = await saveStatement(list, f.name);
+    const months = await saveStatement(list, f.name, list.period);
     await reload(); S.month = months[months.length - 1]; render();
     toast(`Ielādēti ${list.length} ieraksti (${months.map(monthName).join(", ")})`);
   } catch (err) { console.error(err); toast("Neizdevās: " + err.message); }
