@@ -187,6 +187,32 @@ async function prepImage(file) {
   return { big, thumb: "data:image/jpeg;base64," + await blobToB64(th), date };
 }
 
+/* ---------- teksta atpazīšana (Tesseract.js, latviešu valoda, darbojas pārlūkā) ---------- */
+const OCR = { worker: null, queue: Promise.resolve(), busy: 0 };
+function loadScript(src) { return new Promise((res, rej) => { const s = document.createElement("script"); s.src = src; s.onload = res; s.onerror = () => rej(new Error("Neizdevās ielādēt " + src)); document.head.appendChild(s); }); }
+async function ocrWorker() {
+  if (!OCR.worker) OCR.worker = (async () => {
+    if (!window.Tesseract) await loadScript("https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js");
+    return Tesseract.createWorker("lav", 1, { langPath: "https://cdn.jsdelivr.net/npm/@tesseract.js-data/lav/4.0.0_best_int", gzip: true });
+  })().catch(e => { OCR.worker = null; throw e; });
+  return OCR.worker;
+}
+function ocrUi() { if (!S.cur) render(); else { const b = $("[data-act=ocr]"); if (b) b.disabled = OCR.busy > 0; } }
+function ocrRun(rec, blob) {
+  OCR.busy++; ocrUi();
+  OCR.queue = OCR.queue.then(async () => {
+    try {
+      const w = await ocrWorker();
+      const { data } = await w.recognize(blob);
+      const text = (data.text || "").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+      rec.text = text; rec.ocrAt = Date.now();
+      await store.put(rec);
+      if (S.cur && S.cur.id === rec.id) { const t = $("#r-text"); if (t) t.value = text; }
+    } catch (e) { console.warn("OCR", e); toast("Teksta atpazīšana neizdevās: " + e.message); }
+    finally { OCR.busy--; ocrUi(); }
+  });
+}
+
 /* ---------- stāvoklis un skati ---------- */
 const S = { list: [], loaded: false, cur: null, month: "all", q: "", confirmDel: false, busy: "" };
 function monthKey(r) { return (r.date || "").slice(0, 7); }
@@ -195,7 +221,7 @@ function listView() {
   let rows = S.list.slice().sort((a, b) => (b.date || "").localeCompare(a.date || "") || (b.createdAt || 0) - (a.createdAt || 0));
   const months = [...new Set(rows.map(monthKey).filter(Boolean))].sort().reverse();
   if (S.month !== "all") rows = rows.filter(r => monthKey(r) === S.month);
-  if (S.q) { const q = S.q.toLowerCase(); rows = rows.filter(r => ((r.shop && r.shop.name || "") + " " + (r.note || "")).toLowerCase().includes(q)); }
+  if (S.q) { const q = S.q.toLowerCase(); rows = rows.filter(r => ((r.shop && r.shop.name || "") + " " + (r.note || "") + " " + (r.text || "")).toLowerCase().includes(q)); }
   const sum = rows.reduce((a, r) => a + (Number(r.total) || 0), 0), vat = rows.reduce((a, r) => a + (Number(r.vat) || 0), 0);
   return `<section class="view">
     <div class="row">
@@ -203,6 +229,7 @@ function listView() {
       <button class="btn big" data-act="file">Augšupielādēt bildi</button>
     </div>
     ${S.busy ? `<p class="hint">${esc(S.busy)}</p>` : ""}
+    ${OCR.busy ? `<p class="hint">Atpazīst tekstu čekiem (${OCR.busy})… Pirmoreiz tiek ielādēti valodas dati, tas var aizņemt kādu brīdi.</p>` : ""}
     <div class="summary">
       <div><span class="eyebrow">Čeki</span><b>${rows.length}</b></div>
       <div><span class="eyebrow">Summa</span><b>${money(sum)} €</b></div>
@@ -210,7 +237,7 @@ function listView() {
     </div>
     <div class="filters">
       <select id="f-month" aria-label="Mēnesis"><option value="all">Visi mēneši</option>${months.map(m => `<option value="${m}"${S.month === m ? " selected" : ""}>${m.slice(0, 4)}. ${MONTHS[Number(m.slice(5)) - 1]}</option>`).join("")}</select>
-      <input type="text" id="f-q" placeholder="Meklēt pēc veikala vai piezīmes" value="${esc(S.q)}">
+      <input type="text" id="f-q" placeholder="Meklēt pēc veikala, piezīmes vai teksta" value="${esc(S.q)}">
     </div>
     ${rows.length ? `<div class="cards">${rows.map(r => `<button class="card" data-open="${r.id}"><div class="th" style="background-image:url('${esc(r.thumb || "")}')"></div><div class="meta"><b>${esc(r.shop && r.shop.name || "Bez veikala")}</b><small class="num">${fmtDate(r.date)}</small>${r.total ? `<span class="num">${money(r.total)} €</span>` : `<span class="miss">bez summas</span>`}</div></button>`).join("")}</div>`
       : `<div class="empty">${S.list.length ? "Neviens čeks neatbilst filtram." : "Vēl nav neviena čeka. Uzņem foto vai augšupielādē bildi."}</div>`}
@@ -245,6 +272,7 @@ function detailView() {
           <label class="f span2">Adrese<input type="text" id="r-address" value="${esc(sh.address)}"></label>
         </div>
         <label class="f">Piezīmes<textarea id="r-note">${esc(r.note)}</textarea></label>
+        <label class="f"><span class="row" style="justify-content:space-between">Atpazītais teksts<button type="button" class="btn" data-act="ocr" style="padding:2px 10px"${OCR.busy ? " disabled" : ""}>Atpazīt no jauna</button></span><textarea id="r-text" rows="8" style="font:13px/1.4 var(--f-mono)">${esc(r.text)}</textarea></label>
         <p class="hint">Veikala dati tiek saglabāti tikai pie šī čeka, nevis klientu sarakstā.</p>
       </div>
     </div>
@@ -279,7 +307,7 @@ async function addFiles(files) {
       const { big, thumb, date } = await prepImage(f);
       const rec = { id: uid(), createdAt: Date.now(), date, shop: {}, total: null, thumb };
       await store.putImg(rec.id, big); await store.put(rec);
-      S.list.push(rec); last = rec;
+      S.list.push(rec); last = rec; ocrRun(rec, big);
     } catch (e) { console.warn(e); toast("Neizdevās saglabāt: " + e.message); }
   }
   S.busy = "";
@@ -288,7 +316,7 @@ async function addFiles(files) {
 }
 function readForm() {
   const r = S.cur, num = id => { const v = $(id).value.trim().replace(",", "."); return v === "" ? null : Number(v); };
-  r.date = $("#r-date").value || r.date; r.total = num("#r-total"); r.vat = num("#r-vat"); r.pay = $("#r-pay").value; r.note = $("#r-note").value.trim();
+  r.date = $("#r-date").value || r.date; r.total = num("#r-total"); r.vat = num("#r-vat"); r.pay = $("#r-pay").value; r.note = $("#r-note").value.trim(); r.text = $("#r-text").value;
   r.shop = { name: $("#r-name").value.trim(), regNo: $("#r-regNo").value.trim(), vatNo: $("#r-vatNo").value.trim(), address: $("#r-address").value.trim() };
 }
 document.addEventListener("click", async e => {
@@ -311,6 +339,7 @@ document.addEventListener("click", async e => {
     const a = document.createElement("a"); a.href = URL.createObjectURL(S.photoBlob); a.download = `Ceks_${S.cur.date || "bez-datuma"}_${S.cur.id}.jpg`; document.body.appendChild(a); a.click();
     setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
   }
+  else if (act === "ocr") { if (S.photoBlob) { readForm(); ocrRun(S.cur, S.photoBlob); } }
   else if (act === "save") {
     readForm(); b.disabled = true;
     try { await store.put(S.cur); toast("Saglabāts"); } catch (err) { toast("Neizdevās saglabāt: " + err.message); }
