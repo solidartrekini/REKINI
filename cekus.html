@@ -317,9 +317,10 @@ async function downloadZip(period) {
       toast(`Sagatavo ${++n}/${list.length}…`);
       const d = r.date || "", dir = d ? `${d.slice(0, 4)}/${d.slice(5, 7)} ${MONTHS[Number(d.slice(5, 7)) - 1].replace(/^./, c => c.toUpperCase())}` : "bez datuma", names = [];
       let i = 0;
-      for (const pg of pagesOf(r)) {
+      const srcPages = (r.files && r.files.length) ? r.files : pagesOf(r), ext = (r.files && r.files.length) ? ".pdf" : ".jpg";
+      for (const pg of srcPages) {
         const blob = await store.getImg(pg.id); if (!blob) continue;
-        const nm = `${dir}/Ceks_${d || "bez-datuma"}_${slug(r.shop && r.shop.name)}_${r.id.slice(-5)}${pagesOf(r).length > 1 ? "_" + (++i) : ""}.jpg`;
+        const nm = `${dir}/Ceks_${d || "bez-datuma"}_${slug(r.shop && r.shop.name)}_${r.id.slice(-5)}${srcPages.length > 1 ? "_" + (++i) : ""}${ext}`;
         files.push({ name: nm, data: new Uint8Array(await blob.arrayBuffer()) }); names.push(nm);
       }
       const sh = r.shop || {};
@@ -507,7 +508,7 @@ function detailView() {
     <div class="detail">
       <div class="photo"><img id="photo" alt="Čeka bilde" hidden><p class="hint" id="photo-note">Ielādē bildi…</p>
         ${pagesOf(r).length > 1 ? `<div class="row" style="justify-content:center">${pagesOf(r).map((pg, i) => `<button type="button" class="pg${i === S.page ? " on" : ""}" data-page="${i}" aria-label="Bilde ${i + 1}" style="background-image:url('${esc(pg.thumb || "")}')"></button>`).join("")}</div>` : ""}
-        <div class="row" style="justify-content:center">
+        <div class="row" style="justify-content:center">${origBtn(r)}
           ${pagesOf(r).length < MAXP ? `<button class="btn" data-act="pcam">+ Foto</button><button class="btn" data-act="pfile">+ Fails / PDF</button>` : ""}
           ${ADMIN && pagesOf(r).length > 1 ? `<button class="btn danger" data-act="pdel">Dzēst šo bildi</button>` : ""}
         </div>
@@ -567,7 +568,7 @@ async function openPreview(id, page = 0) {
   const r = S.list.find(x => x.id === id); if (!r) return;
   LB.id = id; LB.page = page; const pgs = pagesOf(r), sh = r.shop || {};
   let el = $("#lb"); if (!el) { el = document.createElement("div"); el.id = "lb"; el.setAttribute("role", "dialog"); el.setAttribute("aria-label", "Čeka priekšskatījums"); document.body.appendChild(el); document.addEventListener("keydown", lbKey); }
-  el.innerHTML = `<div class="top"><span class="t">${esc(sh.name || "Čeks")} · ${fmtDate(r.date)}${r.total != null && r.total !== "" ? " · " + money(r.total) + " €" : ""}</span>${ACC ? "" : `<button class="btn" data-lb="open">Atvērt detaļas</button>`}<button class="btn" data-lb="close" aria-label="Aizvērt">✕</button></div>
+  el.innerHTML = `<div class="top"><span class="t">${esc(sh.name || "Čeks")} · ${fmtDate(r.date)}${r.total != null && r.total !== "" ? " · " + money(r.total) + " €" : ""}</span>${origBtn(r)}${ACC ? "" : `<button class="btn" data-lb="open">Atvērt detaļas</button>`}<button class="btn" data-lb="close" aria-label="Aizvērt">✕</button></div>
     <div class="stage"><p class="hint" style="color:#fff">Ielādē…</p></div>
     <div class="strip">${pgs.length > 1 ? pgs.map((pg, i) => `<button type="button" class="pg${i === page ? " on" : ""}" data-lbpage="${i}" aria-label="Bilde ${i + 1}" style="background-image:url('${esc(pg.thumb || "")}')"></button>`).join("") : ""}</div>`;
   try {
@@ -659,6 +660,19 @@ async function importZip(file) {
     await addFiles(files, { quiet: true });
   } catch (e) { console.warn(e); S.busy = ""; render(); toast("ZIP neizdevās atvērt: " + e.message); }
 }
+/* PDF oriģināls tiek saglabāts papildus bildēm (bildes ir priekšskatījumam un teksta atpazīšanai) */
+async function saveOrig(rec, f) {
+  if (!isPdf(f)) return;
+  if (f.size > 1_300_000) { toast(`PDF "${f.name}" ir pārāk liels oriģināla saglabāšanai (līdz 1,3 MB), saglabāta tikai bilde.`); return; }
+  try { const id = uid(); await store.putImg(id, new Blob([await f.arrayBuffer()], { type: "application/pdf" }), rec.id); rec.files = [...(rec.files || []), { id, name: f.name }]; await store.put(rec); }
+  catch (e) { console.warn(e); toast("PDF oriģinālu saglabāt neizdevās: " + e.message); }
+}
+async function downloadOrig(rid) {
+  const r = S.list.find(x => x.id === rid); if (!r) return;
+  try { for (const f of r.files || []) { const b = await store.getImg(f.id); if (!b) continue; const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([b], { type: "application/pdf" })); a.download = f.name || "ceks.pdf"; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1500); } }
+  catch (e) { toast("Neizdevās: " + e.message); }
+}
+const origBtn = r => r.files && r.files.length ? `<button class="btn" data-orig="${r.id}">Lejupielādēt oriģinālu (PDF)</button>` : "";
 async function addFiles(files, opts = {}) {
   files = [...files].filter(isOk);
   if (!files.length) { toast("Izvēlies bildes vai PDF failu"); return; }
@@ -673,6 +687,7 @@ async function addFiles(files, opts = {}) {
       for (const [i, it] of items.entries()) rec.pages.push({ id: i === 0 ? rec.id : uid(), thumb: it.thumb });
       await store.put(rec);
       for (const [i, it] of items.entries()) await store.putImg(rec.pages[i].id, it.big, rec.id);
+      await saveOrig(rec, f);
       if (text) { rec.text = text; await autoFill(rec); await checkDup(rec); await store.put(rec); }
       S.list.push(rec); last = rec; added++;
       if (!text) ocrRun(rec, items.map(i => i.big));
@@ -700,6 +715,7 @@ async function addPages(files) {
       for (const a of added) r.pages.push({ id: a.id, thumb: a.thumb });
       await store.put(r);
       for (const a of added) { await store.putImg(a.id, a.big, r.id); if (!res.text) blobs.push(a.big); }
+      await saveOrig(r, f);
       if (res.text) text += (text ? "\n\n" : "") + res.text;
     } catch (e) { console.warn(e); toast("Neizdevās saglabāt: " + e.message); }
   }
@@ -719,6 +735,7 @@ document.addEventListener("click", async e => {
   const so = e.target.closest("th[data-sort]"); if (so) { const k = so.dataset.sort; S.sort = { k, d: S.sort.k === k ? -S.sort.d : (k === "date" || k === "total" || k === "vat" ? -1 : 1) }; render(); return; }
   const o = e.target.closest("[data-open]"); if (o && ACC) { openPreview(o.dataset.open); return; } if (o) { S.cur = S.list.find(r => r.id === o.dataset.open); S.page = 0; S.confirmDel = false; render(); window.scrollTo(0, 0); return; }
   const zm = e.target.closest("[data-zipm]"); if (zm) { zm.disabled = true; const t = zm.textContent; zm.textContent = "Veido ZIP…"; await downloadZip(zm.dataset.zipm); zm.disabled = false; zm.textContent = t; return; }
+  const og = e.target.closest("[data-orig]"); if (og) { downloadOrig(og.dataset.orig); return; }
   const b = e.target.closest("[data-act]"); if (!b) return;
   const act = b.dataset.act;
   if (act === "cam") $("#f-cam").click();
@@ -743,7 +760,7 @@ document.addEventListener("click", async e => {
   else if (act === "del-no") { S.confirmDel = false; render(); }
   else if (act === "del-yes") {
     const id = S.cur.id;
-    try { await store.del(id, pagesOf(S.cur).map(x => x.id)); S.list = S.list.filter(r => r.id !== id); S.cur = null; S.confirmDel = false; toast("Čeks izdzēsts"); }
+    try { await store.del(id, [...pagesOf(S.cur).map(x => x.id), ...(S.cur.files || []).map(x => x.id)]); S.list = S.list.filter(r => r.id !== id); S.cur = null; S.confirmDel = false; toast("Čeks izdzēsts"); }
     catch (err) { toast("Neizdevās izdzēst: " + err.message); }
     render();
   }

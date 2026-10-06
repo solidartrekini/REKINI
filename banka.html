@@ -567,13 +567,13 @@ function makeZip(files) {
 function saveBlob(name, blob) { const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000); }
 const safe = t => norm(t).replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 30) || "cheks";
 const pagesOf = r => r.pages && r.pages.length ? r.pages : [{ id: r.id }];
-function rcFileNames(t, r) { const n = pagesOf(r).length, base = `${t.date}_${Math.abs(t.amount).toFixed(2)}_${safe((r.shop && r.shop.name) || t.name)}`; return pagesOf(r).map((pg, i) => ({ id: pg.id, name: base + (n > 1 ? "_" + (i + 1) : "") + ".jpg" })); }
+function rcFileNames(t, r) { const src = r.files && r.files.length ? r.files : pagesOf(r), n = src.length, ext = r.files && r.files.length ? ".pdf" : ".jpg", base = `${t.date}_${Math.abs(t.amount).toFixed(2)}_${safe((r.shop && r.shop.name) || t.name)}`; return src.map((pg, i) => ({ id: pg.id, name: base + (n > 1 ? "_" + (i + 1) : "") + ext })); }
 async function dlReceipt(txId, rid) {
   const t = S.banks.flatMap(b => b.txs).find(x => x.id === txId), r = S.receipts.find(x => x.id === rid); if (!t || !r) return;
   const names = rcFileNames(t, r);
   if (names.length === 1) { saveBlob(names[0].name, await (await srv(`receipts/${names[0].id}/img`)).blob()); return; }
   const files = []; for (const n of names) files.push({ name: n.name, data: new Uint8Array(await (await srv(`receipts/${n.id}/img`)).arrayBuffer()) });
-  saveBlob(names[0].name.replace(/_1\.jpg$/, ".zip"), makeZip(files));
+  saveBlob(names[0].name.replace(/_1\.(jpg|pdf)$/, ".zip"), makeZip(files));
 }
 async function zipMonth() {
   const b = S.banks.find(x => x.id === S.month); if (!b) return;
@@ -623,9 +623,11 @@ async function addReceiptFor(txId, file) {
   const b = S.banks.find(x => x.id === S.month), t = b && b.txs.find(x => x.id === txId); if (!t) return;
   toast("Augšupielādē čeku…");
   const pgs = await fileToPages(file), id = uid(), pages = pgs.map((p, i) => ({ id: i === 0 ? id : uid(), thumb: p.thumb }));
-  const rec = { date: t.date, total: Math.abs(t.amount), shop: { name: t.name || "" }, pay: "", author: "", note: t.desc || "", text: "", thumb: pages[0].thumb, pages, createdAt: Date.now() };
+  const isPdfF = /pdf/i.test(file.type) || /\.pdf$/i.test(file.name), oid = isPdfF && file.size <= 1_300_000 ? uid() : "";
+  const rec = { files: oid ? [{ id: oid, name: file.name }] : undefined, date: t.date, total: Math.abs(t.amount), shop: { name: t.name || "" }, pay: "", author: "", note: t.desc || "", text: "", thumb: pages[0].thumb, pages, createdAt: Date.now() };
   await srv("receipts/" + id, { method: "PUT", body: JSON.stringify(rec) });
   for (let i = 0; i < pgs.length; i++) await srv(`receipts/${pages[i].id}/img` + (i ? "?r=" + id : ""), { method: "PUT", body: await b64Blob(pgs[i].big) });
+  if (oid) await srv(`receipts/${oid}/img?r=${id}`, { method: "PUT", body: await b64Blob(file) });
   S.receipts.push({ ...rec, id });
   b.links = b.links || {}; b.links[txId] = id; await persist(S.month);
   render(); toast("Čeks pievienots un piesaistīts darījumam");

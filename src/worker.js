@@ -102,7 +102,7 @@ async function receipts(request, env, parts) {
     if (!admin) return needAdmin();
     const row = await env.DB.prepare("SELECT data FROM receipts WHERE id = ?1").bind(id).first();
     const ids = new Set([id]);
-    try { for (const pg of (JSON.parse(row.data).pages || [])) if (pg && /^[\w-]{6,64}$/.test(pg.id)) ids.add(pg.id); } catch (e) {}
+    try { const d0 = JSON.parse(row.data); for (const pg of [...(d0.pages || []), ...(d0.files || [])]) if (pg && /^[\w-]{6,64}$/.test(pg.id)) ids.add(pg.id); } catch (e) {}
     await env.DB.prepare("DELETE FROM receipts WHERE id = ?1").bind(id).run();
     for (const i of ids) await env.DB.prepare("DELETE FROM receipt_imgs WHERE id = ?1").bind(i).run();
     return J({ ok: true });
@@ -114,7 +114,7 @@ async function receipts(request, env, parts) {
       if (!admin) {
         // bildi drīkst pievienot tikai svaigam čekam, kura bilžu sarakstā šis id jau ir
         const cands = [id]; const f0 = await fresh(id); let ok = f0.exists && f0.ok;
-        if (!ok) { const rid = new URL(request.url).searchParams.get("r"); if (rid && /^[\w-]{6,64}$/.test(rid)) { const f = await fresh(rid); ok = f.exists && f.ok && (f.data.pages || []).some(pg => pg.id === id); } }
+        if (!ok) { const rid = new URL(request.url).searchParams.get("r"); if (rid && /^[\w-]{6,64}$/.test(rid)) { const f = await fresh(rid); ok = f.exists && f.ok && [...(f.data.pages || []), ...(f.data.files || [])].some(pg => pg.id === id); } }
         if (!ok) return J({ error: "Bildi var pievienot tikai svaigi saglabātam čekam" }, 403);
       }
       await env.DB.prepare("INSERT INTO receipt_imgs (id, data) VALUES (?1, ?2) ON CONFLICT(id) DO UPDATE SET data = ?2").bind(id, b64).run();
@@ -127,7 +127,7 @@ async function receipts(request, env, parts) {
       if (!r) return J({ error: "Nav atrasts" }, 404);
       const bin = atob(r.data), u8 = new Uint8Array(bin.length);
       for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
-      return new Response(u8, { headers: { "Content-Type": "image/jpeg", "Cache-Control": "private, max-age=3600" } });
+      return new Response(u8, { headers: { "Content-Type": r.data.startsWith("JVBER") ? "application/pdf" : "image/jpeg", "Cache-Control": "private, max-age=3600" } });
     }
   }
   return J({ error: "Nav atrasts" }, 404);
