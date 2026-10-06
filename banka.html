@@ -6,6 +6,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
+body.ro [data-act=pick],body.ro [data-add],body.ro [data-addinv],body.ro [data-find],body.ro [data-findinv],body.ro [data-ignore],body.ro [data-unignore],body.ro [data-unlink],body.ro [data-uninv],body.ro [data-findtx],body.ro [data-act=del-month],body.ro .up-panel{display:none!important}
 :root { --bg: #eef0ef; --surface: #fff; --surface-2: #f6f7f6; --line: #d6dbd9; --ink: #18201e; --muted: #5d6965; --accent: #9e2a35; --accent-ink: #fff; --ok: #1f6d4c; --warn: #8a5a00; --warn-soft: #fbf0d8; --bad: #a3242f; --bad-soft: #fbe3e5; --ok-soft: #dff2e8;
   --f-body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif; --f-mono: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace; --r: 6px }
 @media (prefers-color-scheme: dark) { :root { --bg: #141917; --surface: #1c2220; --surface-2: #222a27; --line: #34403c; --ink: #e8edeb; --muted: #9aa7a2; --accent: #e0707a; --accent-ink: #1a0f10; --ok: #6fcf9f; --warn: #e6b450; --warn-soft: #3a2f15; --bad: #f08a92; --bad-soft: #3d1c20; --ok-soft: #173326; color-scheme: dark } }
@@ -87,6 +88,7 @@ function askToken(msg) {
   });
 }
 const ACC = /[?&]acc=1/.test(location.search);
+if (ACC) document.body.classList.add("ro");
 const TKEY = ACC ? "rr-atoken" : "rr-token";
 async function srv(path, opt = {}, retry = true) {
   let t = ""; try { t = localStorage.getItem(TKEY) || ""; } catch (e) {}
@@ -394,7 +396,7 @@ function render() {
   if (!S.loaded) { app.innerHTML = `<section class="view"><p class="hint">Ielādē…</p></section>`; return; }
   const months = S.banks.map(b => b.id).sort();
   app.innerHTML = `<section class="view">
-    <div class="panel"><h2>Augšupielādēt bankas izrakstu</h2>
+    <div class="panel up-panel"><h2>Augšupielādēt bankas izrakstu</h2>
       <p class="hint">Atbalstīti CSV (piem., Swedbank) un camt.053 XML faili. Ja failā ir vairāki mēneši, izraksts tiek sadalīts pa mēnešiem; atkārtoti ielādēti ieraksti netiek dubultoti.</p>
       <div class="row"><button class="btn primary" data-act="pick">Izvēlēties izraksta failu</button></div></div>
     ${coverageView()}
@@ -409,7 +411,7 @@ async function reload() {
   const [b, r, iv] = await Promise.all([srv("acc/bank").then(x => x.json()), srv("receipts").then(x => x.json()), srv("acc/invoices").then(x => x.json())]);
   S.banks = b; S.receipts = r; S.invoices = iv;
   try { S.files = await srv("acc/bankfiles").then(x => x.ok ? x.json() : []); } catch (e) { S.files = []; }
-  for (const bk of S.banks) { try { if (dedupeDoc(bk)) await persist(bk.id); } catch (e) { console.warn("dedupe", e); } }
+  for (const bk of S.banks) { try { if (dedupeDoc(bk) && !ACC) await persist(bk.id); } catch (e) { console.warn("dedupe", e); } }
   if (!S.banks.some(x => x.id === S.month)) S.month = S.banks.map(x => x.id).sort().pop() || "";
 }
 async function loadStatement(f) {
@@ -457,6 +459,7 @@ async function preview(id) {
   } catch (err) { const st = $("#lb .stage"); if (st) st.innerHTML = `<p class="hint" style="color:#fff">${esc(err.message)}</p>`; }
 }
 document.addEventListener("click", async e => {
+  if (ACC && e.target.closest("[data-act=pick],[data-add],[data-addinv],[data-find],[data-findinv],[data-ignore],[data-unignore],[data-unlink],[data-uninv],[data-findtx],[data-act=del-month]")) return;
   if (e.target.id === "lb" || e.target.closest("[data-lb]")) { closeLb(); return; }
   const so = e.target.closest("th[data-sort]"); if (so) { const k = so.dataset.sort; S.sort = { k, d: S.sort.k === k ? -S.sort.d : 1 }; render(); return; }
   const pv = e.target.closest("[data-prev]"); if (pv) { preview(pv.dataset.prev); return; }
@@ -512,6 +515,7 @@ function dropZone(onDrop) {
   addEventListener("drop", e => { if (!has(e)) return; e.preventDefault(); show(false); const fl = [...e.dataTransfer.files]; if (fl.length) onDrop(fl, e); });
 }
 dropZone(async (fl, e) => {
+  if (ACC) { toast("Grāmatvedis neko nevar augšupielādēt"); return; }
   const isRc = f => /^image\//.test(f.type) || /pdf/.test(f.type) || /\.(pdf|jpe?g|png|heic|webp)$/i.test(f.name);
   const st = fl.find(f => /\.(csv|txt|xml)$/i.test(f.name) || /csv|xml|text\/plain/.test(f.type));
   if (st) { loadStatement(st); return; }

@@ -41,7 +41,7 @@ iPhone šo funkciju neatbalsta, tur izmanto pogas lapā.
 
 ## Grāmatveža piekļuve ("Grāmatvedei")
 
-Lapa `gramatvedis.html` (sākumlapā karte "Grāmatvedei") ļauj grāmatvedim apskatīt un lejupielādēt čekus, rēķinus (PDF, ZIP pa gadiem/mēnešiem) un augšupielādēt bankas izrakstu (konta pārskatu). Grāmatvedis neko nevar dzēst vai mainīt čekos un rēķinos.
+Lapa `gramatvedis.html` (sākumlapā karte "Grāmatvedei") ļauj grāmatvedim apskatīt un lejupielādēt čekus, rēķinus (PDF, ZIP pa gadiem/mēnešiem), kā arī konta pārskatu un oriģinālos bankas izrakstus. Grāmatvedis neko nevar augšupielādēt, dzēst vai mainīt (tikai skatīt, šķirot, meklēt, lejupielādēt).
 
 1. Cloudflare → Workers & Pages → `rekini` → Settings → Variables and Secrets → Add.
 2. Type: **Secret**, Name: `ACCOUNTANT_TOKEN`, Value: jauna garā parole (atšķirīga no `APP_TOKEN`). Deploy.

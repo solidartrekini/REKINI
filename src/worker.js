@@ -183,6 +183,7 @@ async function accountant(request, env, parts) {
       return J(results.map(r => ({ ...JSON.parse(r.meta), id: r.id })));
     }
     if (parts.length === 3) {
+      if (m === "PUT" && !admin) return J({ error: "Grāmatvedis nevar rediģēt" }, 403);
       if (m === "PUT") {
         let b; try { b = JSON.parse(await request.text()); } catch (e) { return J({ error: "Nederīgs JSON" }, 400); }
         if (!b || typeof b.file !== "string" || !B64.test(b.file) || b.file.length > 1_800_000) return J({ error: "Fails pārāk liels vai nederīgs" }, 413);
@@ -208,6 +209,7 @@ async function accountant(request, env, parts) {
       return J(results.map(r => ({ id: r.id, ...JSON.parse(r.data) })));
     }
     if (parts.length === 3 && /^\d{4}-\d{2}$/.test(id)) {
+      if ((m === "PUT" || m === "DELETE") && !admin) return J({ error: "Grāmatvedis nevar rediģēt" }, 403);
       if (m === "PUT") {
         const body = await request.text();
         if (body.length > 1_500_000) return J({ error: "Par lielu" }, 413);
