@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="lv"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Grāmatvedei</title>
+<link rel="icon" href="icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root { --bg: #eef0ef; --surface: #fff; --surface-2: #f6f7f6; --line: #d6dbd9; --ink: #18201e; --muted: #5d6965; --accent: #9e2a35; --accent-ink: #fff; --bad: #a3242f; --f-body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif; --f-mono: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace; --r: 6px }
+@media (prefers-color-scheme: dark) { :root { --bg: #141917; --surface: #1c2220; --surface-2: #222a27; --line: #34403c; --ink: #e8edeb; --muted: #9aa7a2; --accent: #e0707a; --accent-ink: #1a0f10; --bad: #f08a92; color-scheme: dark } }
+* { box-sizing: border-box }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.5 var(--f-body) }
+.wrap { max-width: 1100px; margin: 0 auto; padding: 0 16px 48px }
+.num { font-family: var(--f-mono); font-variant-numeric: tabular-nums }
+.bar { border-bottom: 1px solid var(--line); background: var(--bg); position: sticky; top: 0; z-index: 5 } .bar .wrap { display: flex; align-items: center; gap: 16px; padding-block: 10px; flex-wrap: wrap }
+.bar h1 { margin: 0; font-size: 18px } .bar a { color: var(--muted); text-decoration: none; font-size: 13px }
+nav { display: flex; gap: 4px; margin-left: auto } nav button { border: 1px solid transparent; background: none; padding: 7px 14px; border-radius: var(--r); cursor: pointer; font: inherit; color: var(--muted); font-weight: 500 }
+nav button[aria-current=true] { background: var(--surface); border-color: var(--line); color: var(--ink) }
+button, select { font: inherit; color: inherit }
+.btn { display: inline-flex; align-items: center; border: 1px solid var(--line); background: var(--surface); padding: 8px 14px; border-radius: var(--r); cursor: pointer; font-weight: 500; white-space: nowrap }
+.btn:hover { border-color: var(--muted) } .btn.sm { padding: 3px 9px; font-size: 12px } .btn:disabled { opacity: .5 }
+select, input[type=text] { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 8px 9px; font-size: 15px }
+.view { padding-top: 16px; display: grid; gap: 14px }
+.row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center }
+.hint { color: var(--muted); font-size: 13px; margin: 0 }
+.tablewrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 8px }
+table.list { width: 100%; border-collapse: collapse; min-width: 640px }
+table.list th { text-align: left; font: 500 11px var(--f-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); padding: 10px 12px; border-bottom: 1px solid var(--line) }
+table.list td { padding: 8px 12px; border-bottom: 1px solid var(--line) } table.list tr:last-child td { border-bottom: 0 } table.list .r { text-align: right }
+.empty { padding: 28px; text-align: center; color: var(--muted); background: var(--surface); border: 1px dashed var(--line); border-radius: 8px }
+.summary { display: flex; gap: 10px; flex-wrap: wrap } .summary div { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 8px 14px } .summary b { font: 500 18px var(--f-mono); display: block }
+iframe { width: 100%; height: calc(100vh - 120px); min-height: 560px; border: 0; background: transparent }
+.toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--ink); color: var(--bg); padding: 8px 16px; border-radius: var(--r); font-size: 13px; z-index: 60 }
+[hidden] { display: none !important }
+</style></head><body>
+<header class="bar"><div class="wrap"><a href="./">← Sākums</a><h1>Grāmatvedei</h1>
+<nav><button data-tab="receipts">Čeki</button><button data-tab="invoices">Rēķini</button><button data-tab="bank">Bankas izraksts</button></nav></div></header>
+<main class="wrap" id="app"></main>
+<div class="toast" id="toast" hidden role="status"></div>
+<script>
+const $ = (s, el = document) => el.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const money = n => new Intl.NumberFormat("lv-LV", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Math.round((Number(n) || 0) * 100) / 100);
+const fmtDate = s => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s || ""); return m ? `${m[3]}.${m[2]}.${m[1]}` : "—"; };
+const MONTHS = ["janvāris", "februāris", "marts", "aprīlis", "maijs", "jūnijs", "jūlijs", "augusts", "septembris", "oktobris", "novembris", "decembris"];
+function toast(m) { const t = $("#toast"); t.textContent = m; t.hidden = false; clearTimeout(toast.h); toast.h = setTimeout(() => t.hidden = true, 3500); }
+const TKEY = "rr-atoken";
+async function srv(path, opt = {}, retry = true) {
+  let t = ""; try { t = localStorage.getItem(TKEY) || ""; } catch (e) {}
+  if (!t) { t = (prompt("Ievadi grāmatveža atslēgu:") || "").trim(); if (t) try { localStorage.setItem(TKEY, t); } catch (e) {} }
+  const r = await fetch("api/" + path, { ...opt, headers: { Authorization: "Bearer " + t } });
+  if (r.status === 401) { try { localStorage.removeItem(TKEY); } catch (e) {} if (retry) return srv(path, opt, false); throw new Error("Nepareiza atslēga"); }
+  if (!r.ok) { let m = ""; try { m = (await r.json()).error; } catch (e) {} throw new Error(m || "Servera kļūda " + r.status); }
+  return r;
+}
+const CRC_T = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+function crc32(u8) { let c = 0xFFFFFFFF; for (let i = 0; i < u8.length; i++) c = CRC_T[(c ^ u8[i]) & 255] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; }
+function makeZip(files) {
+  const enc = new TextEncoder(), parts = [], cen = []; let off = 0;
+  const d = new Date(), dt = ((d.getFullYear() - 1980) << 9 | (d.getMonth() + 1) << 5 | d.getDate()) & 0xFFFF, tm = (d.getHours() << 11 | d.getMinutes() << 5 | d.getSeconds() >> 1) & 0xFFFF;
+  for (const f of files) {
+    const nm = enc.encode(f.name), crc = crc32(f.data), sz = f.data.length;
+    const lh = new DataView(new ArrayBuffer(30));
+    lh.setUint32(0, 0x04034b50, true); lh.setUint16(4, 20, true); lh.setUint16(6, 0x0800, true); lh.setUint16(8, 0, true); lh.setUint16(10, tm, true); lh.setUint16(12, dt, true);
+    lh.setUint32(14, crc, true); lh.setUint32(18, sz, true); lh.setUint32(22, sz, true); lh.setUint16(26, nm.length, true); lh.setUint16(28, 0, true);
+    parts.push(new Uint8Array(lh.buffer), nm, f.data);
+    const ch = new DataView(new ArrayBuffer(46));
+    ch.setUint32(0, 0x02014b50, true); ch.setUint16(4, 20, true); ch.setUint16(6, 20, true); ch.setUint16(8, 0x0800, true); ch.setUint16(10, 0, true); ch.setUint16(12, tm, true); ch.setUint16(14, dt, true);
+    ch.setUint32(16, crc, true); ch.setUint32(20, sz, true); ch.setUint32(24, sz, true); ch.setUint16(28, nm.length, true); ch.setUint32(42, off, true);
+    cen.push(new Uint8Array(ch.buffer), nm);
+    off += 30 + nm.length + sz;
+  }
+  const cs = cen.reduce((a, x) => a + x.length, 0), end = new DataView(new ArrayBuffer(22));
+  end.setUint32(0, 0x06054b50, true); end.setUint16(8, files.length, true); end.setUint16(10, files.length, true); end.setUint32(12, cs, true); end.setUint32(16, off, true);
+  return new Blob([...parts, ...cen, new Uint8Array(end.buffer)], { type: "application/zip" });
+}
+
+const S = { tab: "receipts", invoices: [], ok: false, period: "all", q: "" };
+const fname = i => `Rekins_${String(i.number).replace(/[^\w.-]+/g, "_")}.pdf`;
+function save(name, blob) { const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000); }
+function periods() { const y = new Set(), m = new Set(); for (const i of S.invoices) if (i.date) { y.add(i.date.slice(0, 4)); m.add(i.date.slice(0, 7)); } return { years: [...y].sort().reverse(), months: [...m].sort().reverse() }; }
+const inPeriod = i => S.period === "all" || (i.date || "").startsWith(S.period);
+function invoicesView() {
+  const rows = S.invoices.filter(i => inPeriod(i) && (!S.q || (i.number + " " + (i.client || "")).toLowerCase().includes(S.q.toLowerCase()))).sort((a, b) => (b.date || "").localeCompare(a.date || "") || String(b.number).localeCompare(String(a.number)));
+  const p = periods(), sum = rows.reduce((a, i) => a + (Number(i.total) || 0), 0);
+  return `<section class="view">
+    <div class="row"><select id="inv-p" aria-label="Periods"><option value="all">Visi rēķini</option>${p.years.map(y => `<option value="${y}"${S.period === y ? " selected" : ""}>Gads ${y}</option>`).join("")}${p.months.map(m => `<option value="${m}"${S.period === m ? " selected" : ""}>${m.slice(0, 4)}. ${MONTHS[Number(m.slice(5)) - 1]}</option>`).join("")}</select>
+      <input type="text" id="inv-q" placeholder="Meklēt pēc numura vai klienta" value="${esc(S.q)}">
+      <button class="btn" data-act="zip"${rows.length ? "" : " disabled"}>Lejupielādēt ZIP</button></div>
+    <div class="summary"><div><span class="hint">Rēķini</span><b>${rows.length}</b></div><div><span class="hint">Summa</span><b>${money(sum)} €</b></div></div>
+    ${rows.length ? `<div class="tablewrap"><table class="list"><thead><tr><th>Numurs</th><th>Klients</th><th>Datums</th><th class="r">Summa, EUR</th><th></th></tr></thead><tbody>
+      ${rows.map(i => `<tr><td class="num">${esc(i.number)}</td><td>${esc(i.client || "—")}</td><td class="num">${fmtDate(i.date)}</td><td class="r num">${money(i.total)}</td><td class="r"><button class="btn sm" data-pdf="${esc(i.id)}">PDF</button></td></tr>`).join("")}
+    </tbody></table></div>` : `<div class="empty">${S.invoices.length ? "Nekas neatbilst filtram." : "Vēl nav neviena izrakstīta rēķina grāmatvedim."}</div>`}
+  </section>`;
+}
+function render() {
+  document.querySelectorAll("nav button").forEach(b => b.setAttribute("aria-current", b.dataset.tab === S.tab));
+  const app = $("#app");
+  if (!S.ok) { app.innerHTML = `<section class="view"><p class="hint">Ielādē…</p></section>`; return; }
+  if (S.tab === "invoices") { app.innerHTML = invoicesView(); app.dataset.t = "inv"; return; }
+  const src = S.tab === "receipts" ? "cekus.html?acc=1" : "banka.html?acc=1";
+  if (app.dataset.t !== S.tab) { app.innerHTML = `<iframe src="${src}" title="${S.tab}"></iframe>`; app.dataset.t = S.tab; }
+}
+document.addEventListener("click", async e => {
+  const tb = e.target.closest("nav button"); if (tb) { S.tab = tb.dataset.tab; render(); return; }
+  const pd = e.target.closest("[data-pdf]");
+  try {
+    if (pd) { const i = S.invoices.find(x => x.id === pd.dataset.pdf); save(fname(i), await (await srv("acc/invoices/" + i.id)).blob()); return; }
+    const z = e.target.closest("[data-act=zip]");
+    if (z) {
+      const list = S.invoices.filter(inPeriod); if (!list.length) return; z.disabled = true; const files = [];
+      for (const i of list.sort((a, b) => (a.date || "").localeCompare(b.date || ""))) {
+        toast(`Ielādē PDF ${files.length + 1}/${list.length}…`);
+        const [yy, mm] = (i.date || "0000-00").split("-");
+        files.push({ name: `${yy}/${mm} ${MONTHS[Number(mm) - 1] || ""}/${fname(i)}`, data: new Uint8Array(await (await srv("acc/invoices/" + i.id)).arrayBuffer()) });
+      }
+      save(S.period === "all" ? "Rekini_visi.zip" : `Rekini_${S.period}.zip`, makeZip(files)); toast(`ZIP gatavs: ${files.length} rēķini`); z.disabled = false;
+    }
+  } catch (err) { toast("Neizdevās: " + err.message); render(); }
+});
+document.addEventListener("change", e => { if (e.target.id === "inv-p") { S.period = e.target.value; render(); } });
+document.addEventListener("input", e => { if (e.target.id === "inv-q") { S.q = e.target.value; const p = e.target.selectionStart; render(); const q = $("#inv-q"); q.focus(); q.setSelectionRange(p, p); } });
+(async () => {
+  render();
+  try {
+    const j = await (await fetch("api/ping", { cache: "no-store" })).json();
+    if (!j || !j.ok || !j.db) throw new Error("Servera versija nav pieejama");
+    if (!j.accountant) { $("#app").innerHTML = `<section class="view"><div class="empty">Grāmatveža atslēga vēl nav iestatīta serverī (ACCOUNTANT_TOKEN).</div></section>`; return; }
+    S.invoices = await (await srv("acc/invoices")).json(); S.ok = true; render();
+  } catch (e) { $("#app").innerHTML = `<section class="view"><div class="empty">${esc(e.message)}</div></section>`; }
+})();
+</script></body></html>

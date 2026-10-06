@@ -123,7 +123,8 @@ const getAuthor = () => { try { const a = localStorage.getItem("rr-author"); if 
 const PAY = ["Karte", "Skaidra nauda", "Pārskaitījums", "Cits"];
 function toast(msg) { const t = $("#toast"); t.textContent = msg; t.hidden = false; clearTimeout(toast.h); toast.h = setTimeout(() => t.hidden = true, 3000); }
 
-const ADMIN = /[?&]admin=1/.test(location.search);
+const ACC = /[?&]acc=1/.test(location.search); // grāmatveža skats: tikai apskate un lejupielāde
+const ADMIN = /[?&]admin=1/.test(location.search) || ACC;
 const MEM = new Map();
 /* ---------- glabāšana: serveris (Cloudflare D1) vai pārlūka IndexedDB ---------- */
 const store = {
@@ -133,10 +134,10 @@ const store = {
     try { const r = await fetch("api/ping", { cache: "no-store" }); const j = r.ok ? await r.json() : null; if (j && j.ok && j.db) { this.mode = "server"; this.locked = !!j.receiptsLocked; } } catch (e) {}
   },
   async srv(path, opt = {}, retry = true) {
-    const headers = {}, key = ADMIN ? "rr-token" : "rr-rtoken";
+    const headers = {}, key = ACC ? "rr-atoken" : ADMIN ? "rr-token" : "rr-rtoken";
     if (ADMIN || this.locked) {
       let t = ""; try { t = localStorage.getItem(key) || ""; } catch (e) {}
-      if (!t) { t = (prompt(ADMIN ? "Ievadi rēķinu rīka paroli:" : "Ievadi čeku piekļuves atslēgu:") || "").trim(); if (t) try { localStorage.setItem(key, t); } catch (e) {} }
+      if (!t) { t = (prompt(ACC ? "Ievadi grāmatveža atslēgu:" : ADMIN ? "Ievadi rēķinu rīka paroli:" : "Ievadi čeku piekļuves atslēgu:") || "").trim(); if (t) try { localStorage.setItem(key, t); } catch (e) {} }
       headers.Authorization = "Bearer " + t;
     }
     const r = await fetch("api/" + path, { ...opt, headers });
@@ -442,14 +443,14 @@ function listView() {
   if (S.q) { const q = S.q.toLowerCase(); rows = rows.filter(r => ((r.shop && r.shop.name || "") + " " + (r.author || "") + " " + (r.note || "") + " " + (r.text || "")).toLowerCase().includes(q)); }
   const sum = rows.reduce((a, r) => a + (Number(r.total) || 0), 0), vat = rows.reduce((a, r) => a + (Number(r.vat) || 0), 0);
   return `<section class="view">
-    <label class="f" style="max-width:260px">Autors<select id="f-author">${AUTHORS.map(a => `<option${getAuthor() === a ? " selected" : ""}>${a}</option>`).join("")}</select></label>
+    ${ACC ? "" : `<label class="f" style="max-width:260px">Autors<select id="f-author">${AUTHORS.map(a => `<option${getAuthor() === a ? " selected" : ""}>${a}</option>`).join("")}</select></label>
     <div class="row">
       <button class="btn big primary" data-act="cam">Uzņemt čeka foto</button>
       <button class="btn big" data-act="file">Augšupielādēt bildi vai PDF</button>
       ${ADMIN ? `<button class="btn big" data-act="zipin">Pievienot .zip</button>` : ""}
     </div>
     ${S.busy ? `<p class="hint">${esc(S.busy)}</p>` : ""}
-    ${OCR.busy ? `<p class="hint">Atpazīst tekstu čekiem (${OCR.busy})… Pirmoreiz tiek ielādēti valodas dati, tas var aizņemt kādu brīdi.</p>` : ""}
+    ${OCR.busy ? `<p class="hint">Atpazīst tekstu čekiem (${OCR.busy})… Pirmoreiz tiek ielādēti valodas dati, tas var aizņemt kādu brīdi.</p>` : ""}`}
     ${ADMIN ? "" : `<p class="hint">Šeit var tikai pievienot čekus. Saglabātie čeki, meklēšana un arhīvs ir rēķinu rīkā.</p>`}
     ${ADMIN ? `<div class="summary">
       <div><span class="eyebrow">Čeki</span><b>${rows.length}</b></div>
@@ -540,7 +541,7 @@ async function openPreview(id, page = 0) {
   const r = S.list.find(x => x.id === id); if (!r) return;
   LB.id = id; LB.page = page; const pgs = pagesOf(r), sh = r.shop || {};
   let el = $("#lb"); if (!el) { el = document.createElement("div"); el.id = "lb"; el.setAttribute("role", "dialog"); el.setAttribute("aria-label", "Čeka priekšskatījums"); document.body.appendChild(el); document.addEventListener("keydown", lbKey); }
-  el.innerHTML = `<div class="top"><span class="t">${esc(sh.name || "Čeks")} · ${fmtDate(r.date)}${r.total != null && r.total !== "" ? " · " + money(r.total) + " €" : ""}</span><button class="btn" data-lb="open">Atvērt detaļas</button><button class="btn" data-lb="close" aria-label="Aizvērt">✕</button></div>
+  el.innerHTML = `<div class="top"><span class="t">${esc(sh.name || "Čeks")} · ${fmtDate(r.date)}${r.total != null && r.total !== "" ? " · " + money(r.total) + " €" : ""}</span>${ACC ? "" : `<button class="btn" data-lb="open">Atvērt detaļas</button>`}<button class="btn" data-lb="close" aria-label="Aizvērt">✕</button></div>
     <div class="stage"><p class="hint" style="color:#fff">Ielādē…</p></div>
     <div class="strip">${pgs.length > 1 ? pgs.map((pg, i) => `<button type="button" class="pg${i === page ? " on" : ""}" data-lbpage="${i}" aria-label="Bilde ${i + 1}" style="background-image:url('${esc(pg.thumb || "")}')"></button>`).join("") : ""}</div>`;
   try {
@@ -689,7 +690,7 @@ function readForm() {
 }
 document.addEventListener("click", async e => {
   const pgb = e.target.closest("[data-page]"); if (pgb) { readForm(); S.page = Number(pgb.dataset.page); render(); return; }
-  const o = e.target.closest("[data-open]"); if (o) { S.cur = S.list.find(r => r.id === o.dataset.open); S.page = 0; S.confirmDel = false; render(); window.scrollTo(0, 0); return; }
+  const o = e.target.closest("[data-open]"); if (o && ACC) { openPreview(o.dataset.open); return; } if (o) { S.cur = S.list.find(r => r.id === o.dataset.open); S.page = 0; S.confirmDel = false; render(); window.scrollTo(0, 0); return; }
   const b = e.target.closest("[data-act]"); if (!b) return;
   const act = b.dataset.act;
   if (act === "cam") $("#f-cam").click();

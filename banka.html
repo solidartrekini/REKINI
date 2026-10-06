@@ -1,0 +1,353 @@
+<!doctype html>
+<html lang="lv"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Bankas izraksti</title>
+<link rel="icon" href="icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root { --bg: #eef0ef; --surface: #fff; --surface-2: #f6f7f6; --line: #d6dbd9; --ink: #18201e; --muted: #5d6965; --accent: #9e2a35; --accent-ink: #fff; --ok: #1f6d4c; --warn: #8a5a00; --warn-soft: #fbf0d8; --bad: #a3242f; --bad-soft: #fbe3e5; --ok-soft: #dff2e8;
+  --f-body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif; --f-mono: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace; --r: 6px }
+@media (prefers-color-scheme: dark) { :root { --bg: #141917; --surface: #1c2220; --surface-2: #222a27; --line: #34403c; --ink: #e8edeb; --muted: #9aa7a2; --accent: #e0707a; --accent-ink: #1a0f10; --ok: #6fcf9f; --warn: #e6b450; --warn-soft: #3a2f15; --bad: #f08a92; --bad-soft: #3d1c20; --ok-soft: #173326; color-scheme: dark } }
+* { box-sizing: border-box }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.5 var(--f-body) }
+.wrap { max-width: 1100px; margin: 0 auto; padding: 0 16px 48px }
+.num { font-family: var(--f-mono); font-variant-numeric: tabular-nums }
+.bar { border-bottom: 1px solid var(--line) } .bar .wrap { display: flex; align-items: center; gap: 16px; padding-block: 12px }
+.bar h1 { margin: 0; font-size: 18px } .bar a { color: var(--muted); text-decoration: none; font-size: 13px }
+.framed .bar { display: none }
+button, input, select { font: inherit; color: inherit }
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 1px solid var(--line); background: var(--surface); padding: 8px 14px; border-radius: var(--r); cursor: pointer; font-weight: 500; white-space: nowrap }
+.btn:hover { border-color: var(--muted) } .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink) } .btn.danger { color: var(--bad) } .btn.sm { padding: 3px 9px; font-size: 12px }
+.btn:disabled { opacity: .5 }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px }
+select, input[type=text] { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 8px 9px; font-size: 15px }
+.view { padding-top: 16px; display: grid; gap: 14px }
+.row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center }
+.hint { color: var(--muted); font-size: 13px; margin: 0 }
+.summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px }
+.summary div { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; display: grid; gap: 2px }
+.summary b { font: 500 20px var(--f-mono) } .eyebrow { font: 500 11px var(--f-mono); letter-spacing: .1em; text-transform: uppercase; color: var(--muted) }
+.summary .bad b { color: var(--bad) } .summary .ok b { color: var(--ok) }
+.tablewrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 8px }
+table.list { width: 100%; border-collapse: collapse; min-width: 760px }
+table.list th { text-align: left; font: 500 11px var(--f-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); padding: 10px 12px; border-bottom: 1px solid var(--line) }
+table.list td { padding: 8px 12px; border-bottom: 1px solid var(--line); vertical-align: middle }
+table.list tr:last-child td { border-bottom: 0 } table.list .r { text-align: right }
+tr.miss td:first-child { box-shadow: inset 4px 0 0 var(--bad) } tr.has td:first-child { box-shadow: inset 4px 0 0 var(--ok) } tr.skip { opacity: .6 }
+.pill { display: inline-block; font-size: 12px; font-weight: 600; padding: 1px 9px; border-radius: 99px; white-space: nowrap }
+.pill.ok { background: var(--ok-soft); color: var(--ok) } .pill.bad { background: var(--bad-soft); color: var(--bad) } .pill.skip { background: var(--surface-2); color: var(--muted) }
+.tn { display: block; width: 32px; height: 42px; border: 1px solid var(--line); border-radius: 4px; background: var(--surface-2) center / cover no-repeat; padding: 0; cursor: zoom-in; flex: none }
+.cell { display: flex; gap: 8px; align-items: center }
+.cell small { color: var(--muted); display: block }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; display: grid; gap: 10px }
+.panel h2 { margin: 0; font-size: 15px }
+.empty { padding: 28px; text-align: center; color: var(--muted); background: var(--surface); border: 1px dashed var(--line); border-radius: 8px }
+.toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--ink); color: var(--bg); padding: 8px 16px; border-radius: var(--r); font-size: 13px; z-index: 60; max-width: 90vw }
+#lb { position: fixed; inset: 0; z-index: 40; background: rgb(0 0 0 / .8); display: grid; grid-template-rows: auto 1fr; gap: 8px; padding: 12px; justify-items: center }
+#lb .top { display: flex; gap: 8px; align-items: center; width: 100%; max-width: 900px; color: #fff }
+#lb .top .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap } #lb .top .btn { color: #18201e; background: #fff }
+#lb .stage { min-height: 0; width: 100%; display: grid; place-items: center; overflow: auto }
+#lb img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 4px; background: #fff }
+[hidden] { display: none !important }
+</style></head><body>
+<header class="bar"><div class="wrap"><a href="./">← Sākums</a><h1>Bankas izraksti</h1></div></header>
+<main class="wrap" id="app"></main>
+<div class="toast" id="toast" hidden role="status"></div>
+<input type="file" id="f-bank" accept=".csv,.txt,.xml,text/csv,text/plain,text/xml,application/xml" hidden>
+<script>
+const $ = (s, el = document) => el.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const money = n => new Intl.NumberFormat("lv-LV", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Math.round((Number(n) || 0) * 100) / 100);
+const pad = n => String(n).padStart(2, "0");
+const fmtDate = s => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s || ""); return m ? `${m[3]}/${m[2]}/${m[1]}` : "—"; };
+const MONTHS = ["janvāris", "februāris", "marts", "aprīlis", "maijs", "jūnijs", "jūlijs", "augusts", "septembris", "oktobris", "novembris", "decembris"];
+const monthName = k => `${k.slice(0, 4)}. ${MONTHS[Number(k.slice(5)) - 1]}`;
+function toast(m) { const t = $("#toast"); t.textContent = m; t.hidden = false; clearTimeout(toast.h); toast.h = setTimeout(() => t.hidden = true, 3500); }
+if (window.top !== window) document.documentElement.classList.add("framed");
+
+const ACC = /[?&]acc=1/.test(location.search);
+const TKEY = ACC ? "rr-atoken" : "rr-token";
+async function srv(path, opt = {}, retry = true) {
+  let t = ""; try { t = localStorage.getItem(TKEY) || ""; } catch (e) {}
+  if (!t) { t = (prompt(ACC ? "Ievadi grāmatveža atslēgu:" : "Ievadi rēķinu rīka paroli:") || "").trim(); if (t) try { localStorage.setItem(TKEY, t); } catch (e) {} }
+  const r = await fetch("api/" + path, { ...opt, headers: { Authorization: "Bearer " + t } });
+  if (r.status === 401) { try { localStorage.removeItem(TKEY); } catch (e) {} if (retry) return srv(path, opt, false); throw new Error("Nepareiza atslēga"); }
+  if (!r.ok) { let m = ""; try { m = (await r.json()).error; } catch (e) {} throw new Error(m || "Servera kļūda " + r.status); }
+  return r;
+}
+
+/* ---------- izraksta nolasīšana ---------- */
+const norm = s => String(s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/\s+/g, " ").trim();
+function parseDate(t) {
+  t = String(t || "").trim(); let m;
+  if ((m = /^(\d{4})[-./](\d{1,2})[-./](\d{1,2})/.exec(t))) return `${m[1]}-${pad(m[2])}-${pad(m[3])}`;
+  if ((m = /^(\d{1,2})[-./](\d{1,2})[-./](\d{4})/.exec(t))) return `${m[3]}-${pad(m[2])}-${pad(m[1])}`;
+  if ((m = /^(\d{4})(\d{2})(\d{2})$/.exec(t))) return `${m[1]}-${m[2]}-${m[3]}`;
+  return "";
+}
+function parseAmount(t) {
+  let s = String(t ?? "").replace(/[\s ]/g, "").replace(/[^\d,.\-+]/g, ""); if (!s || !/\d/.test(s)) return NaN;
+  const lc = s.lastIndexOf(","), ld = s.lastIndexOf(".");
+  if (lc > ld) s = s.replace(/\./g, "").replace(",", "."); else s = s.replace(/,/g, "");
+  return Number(s);
+}
+function splitCsv(text) {
+  const first = text.split(/\r?\n/, 1)[0];
+  const delim = [";", "\t", ","].map(d => [d, first.split(d).length]).sort((a, b) => b[1] - a[1])[0][0];
+  const rows = []; let row = [], cur = "", q = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (q) { if (c === '"') { if (text[i + 1] === '"') { cur += '"'; i++; } else q = false; } else cur += c; }
+    else if (c === '"') q = true;
+    else if (c === delim) { row.push(cur); cur = ""; }
+    else if (c === "\n" || c === "\r") { if (c === "\r" && text[i + 1] === "\n") i++; row.push(cur); cur = ""; if (row.some(x => x.trim())) rows.push(row); row = []; }
+    else cur += c;
+  }
+  row.push(cur); if (row.some(x => x.trim())) rows.push(row);
+  return rows;
+}
+const ALIAS = {
+  date: ["datums", "date", "booking date", "bookingdate", "buchungstag", "darijuma datums", "valutas datums", "value date"],
+  amount: ["summa", "amount", "apjoms", "betrag"],
+  dc: ["debets/kredits", "d/k", "debit/credit", "dk", "cdtdbtind", "debets kredits", "deb/kred"],
+  debit: ["debets", "debit", "izdevumi", "izmaksas"], credit: ["kredits", "credit", "ienakumi", "ienakumi"],
+  name: ["sanemejs/maksatajs", "sanemejs", "maksatajs", "partner", "counterparty", "name", "beneficiary", "nosaukums", "partnera nosaukums", "sanemeja nosaukums", "maksataja nosaukums"],
+  desc: ["informacija sanemejam", "detalas", "description", "details", "paskaidrojums", "maksajuma merkis", "maksajuma detalas", "informacija", "purpose", "reference", "merkis"],
+  type: ["ieraksta tips", "record type"], cur: ["valuta", "currency", "ccy"]
+};
+function fromCsv(text) {
+  const rows = splitCsv(text); if (rows.length < 2) throw new Error("Fails ir tukšs vai nav CSV");
+  let hi = rows.findIndex(r => r.map(norm).some(x => ALIAS.date.includes(x)) && r.map(norm).some(x => [...ALIAS.amount, ...ALIAS.debit].includes(x)));
+  if (hi < 0) throw new Error("Neatpazīju kolonnas. Atrastās kolonnas: " + rows[0].map(x => x.trim()).filter(Boolean).join(", "));
+  const H = rows[hi].map(norm), col = k => { for (const a of ALIAS[k]) { const i = H.indexOf(a); if (i >= 0) return i; } return -1; };
+  const ci = Object.fromEntries(Object.keys(ALIAS).map(k => [k, col(k)]));
+  if (ci.amount < 0 && ci.debit < 0) throw new Error("Nav atrasta summas kolonna");
+  const body = rows.slice(hi + 1), hasType = ci.type >= 0 && body.some(r => String(r[ci.type]).trim() === "20");
+  const out = [];
+  for (const r of body) {
+    if (hasType && String(r[ci.type]).trim() !== "20") continue;
+    const date = parseDate(r[ci.date]); if (!date) continue;
+    let amt;
+    if (ci.amount >= 0) {
+      amt = parseAmount(r[ci.amount]); if (isNaN(amt)) continue;
+      if (ci.dc >= 0) { const d = norm(r[ci.dc]); if (/^(d|db|dbit|debit|debets)/.test(d)) amt = -Math.abs(amt); else if (/^(k|c|cr|crdt|credit|kredits)/.test(d)) amt = Math.abs(amt); }
+    } else {
+      const d = parseAmount(r[ci.debit]), c = ci.credit >= 0 ? parseAmount(r[ci.credit]) : NaN;
+      if (!isNaN(d) && d) amt = -Math.abs(d); else if (!isNaN(c) && c) amt = Math.abs(c); else continue;
+    }
+    out.push({ date, amount: Math.round(amt * 100) / 100, name: ci.name >= 0 ? String(r[ci.name]).trim() : "", desc: ci.desc >= 0 ? String(r[ci.desc]).trim() : "", cur: ci.cur >= 0 ? String(r[ci.cur]).trim() : "" });
+  }
+  return out;
+}
+function fromXml(text) {
+  const doc = new DOMParser().parseFromString(text, "application/xml");
+  if (doc.querySelector("parsererror")) throw new Error("XML fails nav nolasāms");
+  const tags = (el, n) => [...el.getElementsByTagNameNS("*", n)];
+  const first = (el, n) => { const x = tags(el, n)[0]; return x ? x.textContent.trim() : ""; };
+  const ents = tags(doc, "Ntry"); if (!ents.length) throw new Error("XML failā nav atrasti ieraksti (Ntry). Atbalstīts camt.053 formāts.");
+  return ents.map(e => {
+    const amtEl = tags(e, "Amt")[0], cur = amtEl ? amtEl.getAttribute("Ccy") || "" : "";
+    const debit = first(e, "CdtDbtInd") === "DBIT", a = Math.abs(parseAmount(amtEl ? amtEl.textContent : ""));
+    const bk = tags(e, "BookgDt")[0], vl = tags(e, "ValDt")[0];
+    const date = parseDate((bk && bk.textContent.trim()) || (vl && vl.textContent.trim()) || "");
+    const party = tags(e, "RltdPties")[0]; let name = "";
+    if (party) { const p = tags(party, debit ? "Cdtr" : "Dbtr")[0]; name = p ? first(p, "Nm") : ""; }
+    const desc = tags(e, "Ustrd").map(x => x.textContent.trim()).join(" ") || first(e, "AddtlTxInf") || first(e, "AddtlNtryInf");
+    return { date, amount: debit ? -a : a, name, desc, cur };
+  }).filter(t => t.date && !isNaN(t.amount));
+}
+async function readFileText(f) {
+  const buf = await f.arrayBuffer(); let t = new TextDecoder("utf-8").decode(buf);
+  if (t.includes("�")) t = new TextDecoder("windows-1257").decode(buf);
+  return t.replace(/^﻿/, "");
+}
+function parseStatement(text, filename) {
+  const isXml = /^\s*<\?xml|^\s*<Document/i.test(text) || /\.xml$/i.test(filename);
+  return isXml ? fromXml(text) : fromCsv(text);
+}
+
+/* ---------- glabāšana: pa mēnešiem ---------- */
+const S = { banks: [], receipts: [], month: "", showIn: false, onlyMiss: false, loaded: false };
+const txKeyBase = t => `${t.date}|${t.amount.toFixed(2)}|${norm(t.name + " " + t.desc).slice(0, 60)}`;
+function withIds(list) { const seen = {}; return list.map(t => { const b = txKeyBase(t); seen[b] = (seen[b] || 0) + 1; return { ...t, id: b + "|" + seen[b] }; }); }
+async function saveStatement(list, filename) {
+  const byM = {}; for (const t of withIds(list)) (byM[t.date.slice(0, 7)] ||= []).push(t);
+  const months = Object.keys(byM).sort();
+  for (const mk of months) {
+    const old = S.banks.find(b => b.id === mk) || { txs: [], links: {}, ignore: {} };
+    const have = new Map(old.txs.map(t => [t.id, t]));
+    for (const t of byM[mk]) have.set(t.id, have.get(t.id) || t);
+    const txs = [...have.values()].sort((a, b) => a.date.localeCompare(b.date));
+    const doc = { txs, links: old.links || {}, ignore: old.ignore || {}, file: filename, updatedAt: Date.now() };
+    await srv("acc/bank/" + mk, { method: "PUT", body: JSON.stringify(doc) });
+  }
+  return months;
+}
+async function persist(mk) {
+  const b = S.banks.find(x => x.id === mk); if (!b) return;
+  const { id, ...doc } = b; doc.updatedAt = Date.now();
+  await srv("acc/bank/" + mk, { method: "PUT", body: JSON.stringify(doc) });
+}
+
+/* ---------- saistīšana ar čekiem ---------- */
+function matchAll() {
+  const recById = new Map(S.receipts.map(r => [r.id, r])), used = new Set(), res = new Map();
+  const all = S.banks.flatMap(b => b.txs.map(t => ({ t, b })));
+  for (const { t, b } of all) { const rid = (b.links || {})[t.id]; if (rid && recById.has(rid)) { used.add(rid); res.set(t.id, { rid, manual: true }); } }
+  const day = s => Date.parse(s + "T00:00:00Z") / 864e5;
+  const cand = all.filter(({ t, b }) => t.amount < 0 && !res.has(t.id) && !(b.ignore || {})[t.id]).sort((x, y) => x.t.date.localeCompare(y.t.date));
+  for (const { t } of cand) {
+    let best = null, bs = 1e9;
+    for (const r of S.receipts) {
+      if (used.has(r.id) || r.total == null || r.total === "" || !r.date) continue;
+      if (Math.abs(Number(r.total) - Math.abs(t.amount)) > 0.005) continue;
+      const dd = Math.abs(day(r.date) - day(t.date)); if (dd > 7) continue;
+      const shop = norm(r.shop && r.shop.name).replace(/\b(sia|as|ik|zs|oy|ab)\b/g, "").trim(), hay = norm(t.name + " " + t.desc);
+      const sc = dd - (shop.length > 2 && hay.includes(shop.split(" ")[0]) ? 0.5 : 0);
+      if (sc < bs) { bs = sc; best = r; }
+    }
+    if (best) { used.add(best.id); res.set(t.id, { rid: best.id, manual: false }); }
+  }
+  return { res, used };
+}
+
+/* ---------- skats ---------- */
+function monthView() {
+  const b = S.banks.find(x => x.id === S.month); if (!b) return "";
+  const { res, used } = matchAll(), recById = new Map(S.receipts.map(r => [r.id, r]));
+  const outs = b.txs.filter(t => t.amount < 0), ins = b.txs.filter(t => t.amount >= 0);
+  const ign = t => !!(b.ignore || {})[t.id];
+  const have = outs.filter(t => res.has(t.id)).length, skip = outs.filter(t => !res.has(t.id) && ign(t)).length, miss = outs.length - have - skip;
+  let rows = b.txs.filter(t => S.showIn || t.amount < 0);
+  if (S.onlyMiss) rows = rows.filter(t => t.amount < 0 && !res.has(t.id) && !ign(t));
+  const rcMonth = S.receipts.filter(r => (r.date || "").slice(0, 7) === S.month && !used.has(r.id)).sort((x, y) => (x.date || "").localeCompare(y.date || ""));
+  return `<div class="summary">
+      <div><span class="eyebrow">Maksājumi</span><b>${outs.length}</b></div>
+      <div class="ok"><span class="eyebrow">Ar čeku</span><b>${have}</b></div>
+      <div class="${miss ? "bad" : "ok"}"><span class="eyebrow">Trūkst čeka</span><b>${miss}</b></div>
+      <div><span class="eyebrow">Nav jāpievieno</span><b>${skip}</b></div>
+      <div><span class="eyebrow">Izdevumi</span><b>${money(outs.reduce((a, t) => a - t.amount, 0))} €</b></div>
+    </div>
+    <div class="row">
+      <label class="row" style="gap:6px"><input type="checkbox" id="only-miss"${S.onlyMiss ? " checked" : ""}> Rādīt tikai ar trūkstošu čeku</label>
+      <label class="row" style="gap:6px"><input type="checkbox" id="show-in"${S.showIn ? " checked" : ""}> Rādīt arī ienākošos (${ins.length})</label>
+      <span style="flex:1"></span>
+      <button class="btn" data-act="csv">Lejupielādēt atskaiti (CSV)</button>
+      <button class="btn danger" data-act="del-month">Dzēst šo izrakstu</button>
+    </div>
+    ${rows.length ? `<div class="tablewrap"><table class="list"><thead><tr><th>Datums</th><th>Saņēmējs / apraksts</th><th class="r">Summa, EUR</th><th>Čeks</th><th></th></tr></thead><tbody>
+    ${rows.map(t => {
+      const m = res.get(t.id), r = m && recById.get(m.rid), out = t.amount < 0, sk = out && !m && ign(t);
+      let cell = "";
+      if (!out) cell = `<span class="pill skip">ienākošs</span>`;
+      else if (r) cell = `<div class="cell"><button type="button" class="tn" data-prev="${r.id}" aria-label="Priekšskatīt čeku" style="background-image:url('${esc(r.thumb || "")}')"></button><div><span class="pill ok">Čeks ir</span>${m.manual ? ` <small>piesaistīts manuāli</small>` : ""}<small>${esc((r.shop && r.shop.name) || "Bez veikala")} · ${fmtDate(r.date)} · ${money(r.total)} €</small></div></div>`;
+      else if (sk) cell = `<span class="pill skip">Čeks nav vajadzīgs</span>`;
+      else cell = `<span class="pill bad">Trūkst čeka</span>`;
+      const act = !out ? "" : r ? (m.manual ? `<button class="btn sm" data-unlink="${esc(t.id)}">Atsaistīt</button>` : "") :
+        sk ? `<button class="btn sm" data-unignore="${esc(t.id)}">Atcelt</button>` :
+        `<select data-link="${esc(t.id)}" aria-label="Piesaistīt čeku"><option value="">Piesaistīt čeku…</option>${S.receipts.filter(x => !used.has(x.id)).sort((p, q) => Math.abs(Date.parse(p.date || 0) - Date.parse(t.date)) - Math.abs(Date.parse(q.date || 0) - Date.parse(t.date))).slice(0, 40).map(x => `<option value="${x.id}">${fmtDate(x.date)} · ${esc((x.shop && x.shop.name) || "—")} · ${x.total != null && x.total !== "" ? money(x.total) : "—"} €</option>`).join("")}</select> <button class="btn sm" data-ignore="${esc(t.id)}">Čeks nav vajadzīgs</button>`;
+      return `<tr class="${!out ? "skip" : r ? "has" : sk ? "skip" : "miss"}"><td class="num">${fmtDate(t.date)}</td><td>${esc(t.name || "—")}<small style="display:block;color:var(--muted)">${esc(t.desc)}</small></td><td class="r num">${money(t.amount)}</td><td>${cell}</td><td>${act}</td></tr>`;
+    }).join("")}
+    </tbody></table></div>` : `<div class="empty">${S.onlyMiss ? "Visiem maksājumiem čeki ir piesaistīti." : "Šajā izrakstā nav ierakstu."}</div>`}
+    ${rcMonth.length ? `<div class="panel"><h2>Čeki bez bankas maksājuma (${rcMonth.length})</h2><p class="hint">Šie čeki ar ${monthName(S.month)} datumu neatbilst nevienam izraksta maksājumam (piem., apmaksāti skaidrā naudā vai izraksts vēl nav ielādēts).</p>
+      <div class="tablewrap"><table class="list" style="min-width:520px"><tbody>${rcMonth.map(r => `<tr><td style="width:56px"><button type="button" class="tn" data-prev="${r.id}" style="background-image:url('${esc(r.thumb || "")}')" aria-label="Priekšskatīt čeku"></button></td><td class="num">${fmtDate(r.date)}</td><td>${esc((r.shop && r.shop.name) || "—")}</td><td>${esc(r.pay || "")}</td><td class="r num">${r.total != null && r.total !== "" ? money(r.total) : "—"}</td></tr>`).join("")}</tbody></table></div></div>` : ""}`;
+}
+function render() {
+  const app = $("#app");
+  if (!S.loaded) { app.innerHTML = `<section class="view"><p class="hint">Ielādē…</p></section>`; return; }
+  const months = S.banks.map(b => b.id).sort().reverse();
+  app.innerHTML = `<section class="view">
+    <div class="panel"><h2>Augšupielādēt bankas izrakstu</h2>
+      <p class="hint">Atbalstīti CSV (piem., Swedbank) un camt.053 XML faili. Ja failā ir vairāki mēneši, izraksts tiek sadalīts pa mēnešiem; atkārtoti ielādēti ieraksti netiek dubultoti.</p>
+      <div class="row"><button class="btn primary" data-act="pick">Izvēlēties izraksta failu</button></div></div>
+    ${months.length ? `<div class="row"><label class="row" style="gap:8px">Mēnesis <select id="m-sel">${months.map(m => `<option value="${m}"${m === S.month ? " selected" : ""}>${monthName(m)}</option>`).join("")}</select></label></div>${monthView()}`
+      : `<div class="empty">Vēl nav ielādēts neviens bankas izraksts.</div>`}
+  </section>`;
+}
+
+/* ---------- darbības ---------- */
+async function reload() {
+  const [b, r] = await Promise.all([srv("acc/bank").then(x => x.json()), srv("receipts").then(x => x.json())]);
+  S.banks = b; S.receipts = r;
+  if (!S.banks.some(x => x.id === S.month)) S.month = S.banks.map(x => x.id).sort().reverse()[0] || "";
+}
+$("#f-bank").addEventListener("change", async e => {
+  const f = e.target.files && e.target.files[0]; e.target.value = ""; if (!f) return;
+  try {
+    toast("Nolasa izrakstu…");
+    const list = parseStatement(await readFileText(f), f.name);
+    if (!list.length) throw new Error("Failā netika atrasts neviens maksājums");
+    const months = await saveStatement(list, f.name);
+    await reload(); S.month = months[months.length - 1]; render();
+    toast(`Ielādēti ${list.length} ieraksti (${months.map(monthName).join(", ")})`);
+  } catch (err) { console.error(err); toast("Neizdevās: " + err.message); }
+});
+function csvReport() {
+  const b = S.banks.find(x => x.id === S.month); if (!b) return;
+  const { res } = matchAll(), recById = new Map(S.receipts.map(r => [r.id, r]));
+  const q = v => '"' + String(v ?? "").replace(/"/g, '""') + '"';
+  const lines = [["Datums", "Saņēmējs", "Apraksts", "Summa", "Čeks", "Čeka veikals", "Čeka datums", "Čeka summa"].map(q).join(";")];
+  for (const t of b.txs) {
+    const m = res.get(t.id), r = m && recById.get(m.rid), out = t.amount < 0;
+    const st = !out ? "ienākošs" : r ? "ir" : (b.ignore || {})[t.id] ? "nav vajadzīgs" : "TRŪKST";
+    lines.push([fmtDate(t.date), t.name, t.desc, String(t.amount).replace(".", ","), st, r && r.shop ? r.shop.name : "", r ? fmtDate(r.date) : "", r && r.total != null ? String(r.total).replace(".", ",") : ""].map(q).join(";"));
+  }
+  const blob = new Blob(["﻿" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `Banka_${S.month}_atskaite.csv`; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+}
+let LBURL = null;
+function closeLb() { const el = $("#lb"); if (el) el.remove(); if (LBURL) URL.revokeObjectURL(LBURL); LBURL = null; document.removeEventListener("keydown", lbKey); }
+function lbKey(e) { if (e.key === "Escape") closeLb(); }
+async function preview(id) {
+  const r = S.receipts.find(x => x.id === id); if (!r) return;
+  const pgs = r.pages && r.pages.length ? r.pages : [{ id: r.id }];
+  closeLb(); const el = document.createElement("div"); el.id = "lb"; el.setAttribute("role", "dialog");
+  el.innerHTML = `<div class="top"><span class="t">${esc((r.shop && r.shop.name) || "Čeks")} · ${fmtDate(r.date)}${r.total != null && r.total !== "" ? " · " + money(r.total) + " €" : ""}</span><button class="btn" data-lb="x" aria-label="Aizvērt">✕</button></div><div class="stage"><p class="hint" style="color:#fff">Ielādē…</p></div>`;
+  document.body.appendChild(el); document.addEventListener("keydown", lbKey);
+  try {
+    const imgs = [];
+    for (const pg of pgs) { const blob = await (await srv(`receipts/${pg.id}/img`)).blob(); imgs.push(URL.createObjectURL(blob)); }
+    if (!$("#lb")) { imgs.forEach(u => URL.revokeObjectURL(u)); return; }
+    LBURL = imgs[0]; $("#lb .stage").innerHTML = imgs.map(u => `<img alt="Čeka bilde" src="${u}" style="margin-bottom:8px">`).join("");
+  } catch (err) { const st = $("#lb .stage"); if (st) st.innerHTML = `<p class="hint" style="color:#fff">${esc(err.message)}</p>`; }
+}
+document.addEventListener("click", async e => {
+  if (e.target.id === "lb" || e.target.closest("[data-lb]")) { closeLb(); return; }
+  const pv = e.target.closest("[data-prev]"); if (pv) { preview(pv.dataset.prev); return; }
+  const b = S.banks.find(x => x.id === S.month);
+  const un = e.target.closest("[data-unlink]"), ig = e.target.closest("[data-ignore]"), ui = e.target.closest("[data-unignore]");
+  try {
+    if (un && b) { delete b.links[un.dataset.unlink]; await persist(S.month); render(); return; }
+    if (ig && b) { b.ignore = b.ignore || {}; b.ignore[ig.dataset.ignore] = true; await persist(S.month); render(); return; }
+    if (ui && b) { delete b.ignore[ui.dataset.unignore]; await persist(S.month); render(); return; }
+    const act = e.target.closest("[data-act]") && e.target.closest("[data-act]").dataset.act;
+    if (act === "pick") $("#f-bank").click();
+    else if (act === "csv") csvReport();
+    else if (act === "del-month" && b) {
+      if (!confirm(`Dzēst ${monthName(S.month)} bankas izrakstu?`)) return;
+      await srv("acc/bank/" + S.month, { method: "DELETE" }); await reload(); render();
+    }
+  } catch (err) { toast("Neizdevās: " + err.message); }
+});
+document.addEventListener("change", async e => {
+  const t = e.target;
+  if (t.id === "m-sel") { S.month = t.value; render(); }
+  else if (t.id === "only-miss") { S.onlyMiss = t.checked; render(); }
+  else if (t.id === "show-in") { S.showIn = t.checked; render(); }
+  else if (t.dataset && t.dataset.link && t.value) {
+    const b = S.banks.find(x => x.id === S.month); if (!b) return;
+    b.links = b.links || {}; b.links[t.dataset.link] = t.value;
+    try { await persist(S.month); render(); } catch (err) { toast("Neizdevās: " + err.message); }
+  }
+});
+(async () => {
+  render();
+  try {
+    const j = await (await fetch("api/ping", { cache: "no-store" })).json();
+    if (!j || !j.ok || !j.db) throw new Error("nav servera");
+    if (ACC && !j.accountant) { $("#app").innerHTML = `<section class="view"><div class="empty">Grāmatveža atslēga vēl nav iestatīta serverī (ACCOUNTANT_TOKEN).</div></section>`; return; }
+    await reload(); S.loaded = true; render();
+  } catch (e) { $("#app").innerHTML = `<section class="view"><div class="empty">Bankas izraksti ir pieejami tikai servera versijā (Cloudflare). ${esc(e.message)}</div></section>`; }
+})();
+</script></body></html>

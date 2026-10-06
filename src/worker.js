@@ -11,11 +11,12 @@ async function eq(a, b) {
 }
 
 async function api(request, env0, parts) {
-  const env = { ...env0, APP_TOKEN: env0.APP_TOKEN || env0.app_token, DB: env0.DB || env0.db, RECEIPTS_TOKEN: env0.RECEIPTS_TOKEN || env0.receipts_token };
+  const env = { ...env0, APP_TOKEN: env0.APP_TOKEN || env0.app_token, DB: env0.DB || env0.db, RECEIPTS_TOKEN: env0.RECEIPTS_TOKEN || env0.receipts_token, ACCOUNTANT_TOKEN: env0.ACCOUNTANT_TOKEN || env0.accountant_token };
   const m = request.method;
-  if (parts[0] === "ping") return J({ ok: true, configured: !!(env.DB && env.APP_TOKEN), db: !!env.DB, token: !!env.APP_TOKEN, receiptsLocked: !!env.RECEIPTS_TOKEN });
+  if (parts[0] === "ping") return J({ ok: true, configured: !!(env.DB && env.APP_TOKEN), db: !!env.DB, token: !!env.APP_TOKEN, receiptsLocked: !!env.RECEIPTS_TOKEN, accountant: !!env.ACCOUNTANT_TOKEN });
   if (!env.DB) return J({ error: "D1 datubāze nav piesaistīta (binding DB)" }, 500);
   if (parts[0] === "receipts") return receipts(request, env, parts);
+  if (parts[0] === "acc") return accountant(request, env, parts);
   if (!env.APP_TOKEN) return J({ error: "Nav iestatīts APP_TOKEN" }, 500);
   const tok = (request.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "");
   if (!tok || !(await eq(tok, env.APP_TOKEN))) return J({ error: "Nepareiza atslēga" }, 401);
@@ -56,7 +57,8 @@ async function receipts(request, env, parts) {
   const m = request.method;
   const tok = (request.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "");
   const admin = !!(tok && env.APP_TOKEN && (await eq(tok, env.APP_TOKEN)));
-  const uploader = admin || !env.RECEIPTS_TOKEN || !!(tok && (await eq(tok, env.RECEIPTS_TOKEN)));
+  const acc = !admin && !!(tok && env.ACCOUNTANT_TOKEN && (await eq(tok, env.ACCOUNTANT_TOKEN)));
+  const uploader = acc || admin || !env.RECEIPTS_TOKEN || !!(tok && (await eq(tok, env.RECEIPTS_TOKEN)));
   if (!uploader) return J({ error: "Nepareiza atslēga" }, 401);
   if (!receiptTables) {
     await env.DB.exec("CREATE TABLE IF NOT EXISTS receipts (id TEXT PRIMARY KEY, data TEXT NOT NULL)");
@@ -64,8 +66,9 @@ async function receipts(request, env, parts) {
     receiptTables = true;
   }
   const needAdmin = () => J({ error: "Šī darbība ir pieejama tikai rēķinu rīkā" }, 401);
+  if (acc && m !== "GET") return needAdmin();
   if (parts.length === 1 && m === "GET") {
-    if (!admin) return needAdmin();
+    if (!admin && !acc) return needAdmin();
     const { results } = await env.DB.prepare("SELECT id, data FROM receipts").all();
     return J(results.map(r => ({ ...JSON.parse(r.data), id: r.id })));
   }
@@ -116,7 +119,7 @@ async function receipts(request, env, parts) {
       await env.DB.prepare("INSERT INTO receipt_imgs (id, data) VALUES (?1, ?2) ON CONFLICT(id) DO UPDATE SET data = ?2").bind(id, b64).run();
       return J({ ok: true });
     }
-    if (!admin) return needAdmin();
+    if (!admin && !(acc && m === "GET")) return needAdmin();
     if (m === "DELETE") { await env.DB.prepare("DELETE FROM receipt_imgs WHERE id = ?1").bind(id).run(); return J({ ok: true }); }
     if (m === "GET") {
       const r = await env.DB.prepare("SELECT data FROM receipt_imgs WHERE id = ?1").bind(id).first();
@@ -124,6 +127,68 @@ async function receipts(request, env, parts) {
       const bin = atob(r.data), u8 = new Uint8Array(bin.length);
       for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
       return new Response(u8, { headers: { "Content-Type": "image/jpeg", "Cache-Control": "private, max-age=3600" } });
+    }
+  }
+  return J({ error: "Nav atrasts" }, 404);
+}
+
+// ---- Grāmatvedis: rēķinu PDF, bankas izraksti ----
+// Rēķinu PDF augšupielādē tikai rēķinu rīks (APP_TOKEN). Grāmatvedis (ACCOUNTANT_TOKEN) drīkst lasīt rēķinus,
+// čekus un augšupielādēt/labot bankas izrakstus.
+let accTables = false;
+async function accountant(request, env, parts) {
+  const m = request.method;
+  const tok = (request.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "");
+  const admin = !!(tok && env.APP_TOKEN && (await eq(tok, env.APP_TOKEN)));
+  const acc = !admin && !!(tok && env.ACCOUNTANT_TOKEN && (await eq(tok, env.ACCOUNTANT_TOKEN)));
+  if (!admin && !acc) return J({ error: "Nepareiza atslēga" }, 401);
+  if (!accTables) {
+    for (const t of ["inv_meta", "inv_pdf", "bank"]) await env.DB.exec("CREATE TABLE IF NOT EXISTS " + t + " (id TEXT PRIMARY KEY, data TEXT NOT NULL)");
+    accTables = true;
+  }
+  const sub = parts[1], id = parts[2];
+  if (sub === "invoices" && parts.length === 2 && m === "GET") {
+    const { results } = await env.DB.prepare("SELECT id, data FROM inv_meta").all();
+    return J(results.map(r => ({ ...JSON.parse(r.data), id: r.id })));
+  }
+  if ((sub === "invoices" || sub === "bank") && (!id || !/^[\w.-]{3,64}$/.test(id)) && parts.length > 2) return J({ error: "Nederīgs id" }, 400);
+  if (sub === "invoices" && parts.length === 3) {
+    if (m === "PUT") {
+      if (!admin) return J({ error: "Tikai rēķinu rīks var pievienot rēķinus" }, 401);
+      let b; try { b = JSON.parse(await request.text()); } catch (e) { return J({ error: "Nederīgs JSON" }, 400); }
+      if (!b || typeof b.pdf !== "string" || !B64.test(b.pdf) || b.pdf.length > 3_000_000) return J({ error: "Nederīgs vai pārāk liels PDF" }, 413);
+      await env.DB.prepare("INSERT INTO inv_pdf (id, data) VALUES (?1, ?2) ON CONFLICT(id) DO UPDATE SET data = ?2").bind(id, b.pdf).run();
+      await env.DB.prepare("INSERT INTO inv_meta (id, data) VALUES (?1, ?2) ON CONFLICT(id) DO UPDATE SET data = ?2").bind(id, JSON.stringify(b.meta || {})).run();
+      return J({ ok: true });
+    }
+    if (m === "DELETE") {
+      if (!admin) return J({ error: "Tikai rēķinu rīks" }, 401);
+      await env.DB.prepare("DELETE FROM inv_pdf WHERE id = ?1").bind(id).run();
+      await env.DB.prepare("DELETE FROM inv_meta WHERE id = ?1").bind(id).run();
+      return J({ ok: true });
+    }
+    if (m === "GET") {
+      const r = await env.DB.prepare("SELECT data FROM inv_pdf WHERE id = ?1").bind(id).first();
+      if (!r) return J({ error: "Nav atrasts" }, 404);
+      const bin = atob(r.data), u8 = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+      return new Response(u8, { headers: { "Content-Type": "application/pdf", "Cache-Control": "private, max-age=600" } });
+    }
+  }
+  if (sub === "bank") {
+    if (parts.length === 2 && m === "GET") {
+      const { results } = await env.DB.prepare("SELECT id, data FROM bank").all();
+      return J(results.map(r => ({ id: r.id, ...JSON.parse(r.data) })));
+    }
+    if (parts.length === 3 && /^\d{4}-\d{2}$/.test(id)) {
+      if (m === "PUT") {
+        const body = await request.text();
+        if (body.length > 1_500_000) return J({ error: "Par lielu" }, 413);
+        try { JSON.parse(body); } catch (e) { return J({ error: "Nederīgs JSON" }, 400); }
+        await env.DB.prepare("INSERT INTO bank (id, data) VALUES (?1, ?2) ON CONFLICT(id) DO UPDATE SET data = ?2").bind(id, body).run();
+        return J({ ok: true });
+      }
+      if (m === "DELETE") { await env.DB.prepare("DELETE FROM bank WHERE id = ?1").bind(id).run(); return J({ ok: true }); }
     }
   }
   return J({ error: "Nav atrasts" }, 404);

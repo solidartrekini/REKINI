@@ -167,6 +167,7 @@ table.list .r { text-align: right }
       <button id="tab-invoices" data-tab="invoices" aria-current="true">Rēķini</button>
       <button id="tab-clients" data-tab="clients">Klienti</button>
       <button id="tab-receipts" data-tab="receipts" hidden>Čeki</button>
+      <button id="tab-bank" data-tab="bank" hidden>Banka</button>
       <button id="tab-settings" data-tab="settings">Mani rekvizīti</button>
     </nav>
     <span class="store-note" id="store-note">Ielādē datus…</span>
@@ -559,6 +560,23 @@ async function drivePdfQuiet(inv) {
     toast("Rēķins " + inv.number + " saglabāts Google Drive");
   } catch (e) { console.warn(e); toast("PDF neizdevās saglabāt Drive: " + e.message); }
 }
+/* ---------- rēķinu PDF grāmatvedim (tikai servera režīmā) ---------- */
+const u8b64 = u8 => { let s = ""; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); return btoa(s); };
+async function srvPdfSend(inv) {
+  const meta = { number: inv.number, date: inv.date, client: clientName(inv), total: totals(inv, inv.seller ? inv.seller.vatPayer : S.settings.vatPayer).total };
+  await store.srv("acc/invoices/" + encodeURIComponent(inv.id), { method: "PUT", body: JSON.stringify({ meta, pdf: u8b64(await buildPdfBytes(inv)) }) });
+}
+async function srvPdfQuiet(inv) {
+  if (store.mode !== "server" || typeof PDFLib === "undefined" || typeof fontkit === "undefined") return;
+  try { await srvPdfSend(inv); } catch (e) { console.warn(e); toast("Rēķins saglabāts, bet PDF grāmatvedim nenosūtījās: " + e.message); }
+}
+async function srvPdfAll() {
+  const list = S.invoices.filter(i => i.status !== "draft" && !i.example);
+  if (!list.length) { toast("Nav izrakstītu rēķinu"); return; }
+  let n = 0, bad = 0;
+  for (const inv of list) { try { await srvPdfSend(inv); n++; toast(`Grāmatvedim: ${n}/${list.length}…`); } catch (e) { console.warn(e); bad++; } }
+  toast(bad ? `Nosūtīti ${n}, neizdevās ${bad}` : `Grāmatvedim pieejami ${n} rēķini`);
+}
 async function driveUploadAll() {
   if (!DRIVE.tok) { toast("Vispirms pieslēdz Google Drive (poga augšā)"); return; }
   const list = S.invoices.filter(i => i.status !== "draft" && !i.example);
@@ -588,6 +606,7 @@ function render() {
   if (S.tab === "invoices") app.innerHTML = S.editing ? editorView() : listView();
   else if (S.tab === "clients") app.innerHTML = clientsView();
   else if (S.tab === "receipts") app.innerHTML = receiptsView();
+  else if (S.tab === "bank") app.innerHTML = `<section class="view" style="padding-top:8px"><iframe src="banka.html?admin=1" title="Banka" style="width:100%;height:calc(100vh - 110px);min-height:520px;border:0;background:transparent"></iframe></section>`;
   else app.innerHTML = settingsView();
   if (S.editing) fitSheet();
   driveUI(); lockUI();
@@ -754,7 +773,7 @@ document.addEventListener("click", async e => {
   else if (act === "dup") { const d = JSON.parse(JSON.stringify(inv)); Object.assign(d, { id: uid(), _new: true, status: "draft", date: today(), due: addDays(today(), S.settings.termDays), example: false, autoNumber: true }); d.number = nextNumber(d.date); delete d.seller; delete d.buyer; S.editing = d; render(); toast("Izveidota kopija. Saglabā, lai to paturētu."); }
   else if (act === "del") { S.confirmDel = true; render(); }
   else if (act === "del-no") { S.confirmDel = false; render(); }
-  else if (act === "del-yes") { S.invoices = S.invoices.filter(i => i.id !== inv.id); S.editing = null; S.confirmDel = false; await guarded(() => store.del("invoices", inv.id)); render(); toast("Rēķins dzēsts"); }
+  else if (act === "del-yes") { S.invoices = S.invoices.filter(i => i.id !== inv.id); S.editing = null; S.confirmDel = false; await guarded(() => store.del("invoices", inv.id)); if (store.mode === "server") { try { await store.srv("acc/invoices/" + encodeURIComponent(inv.id), { method: "DELETE" }); } catch (e) {} } render(); toast("Rēķins dzēsts"); }
   else if (act === "client-new") { S.clientEditing = null; S.confirmDel = false; render(); $("#c-name")?.focus(); }
   else if (act === "client-del") { S.confirmDel = true; render(); }
   else if (act === "client-del-yes") { const id = S.clientEditing.id; S.clients = S.clients.filter(c => c.id !== id); S.clientEditing = null; S.confirmDel = false; await guarded(() => store.del("clients", id)); render(); toast("Klients dzēsts"); }
@@ -819,7 +838,8 @@ async function saveInvoice() {
   const ok = await guarded(() => store.put("invoices", out));
   if (ok) toast("Rēķins " + out.number + " saglabāts");
   render();
-  if (ok && out.status !== "draft") await drivePdfQuiet(out);
+  if (ok && out.status !== "draft") { await drivePdfQuiet(out); await srvPdfQuiet(out); }
+  else if (ok && store.mode === "server") { try { await store.srv("acc/invoices/" + encodeURIComponent(out.id), { method: "DELETE" }); } catch (e) {} }
 }
 
 /* ---------- Čeki: saraksts, meklēšana, bildes un ZIP ir cekus.html administrēšanas režīmā (iegults šeit, aiz paroles) ---------- */
@@ -1141,6 +1161,7 @@ function driveUI() {
   }
   const nb = $("#store-note"); if (nb && store.mode === "local") nb.textContent = DRIVE.state === "on" ? "Dati: šajā pārlūkā un Google Drive" : "Dati saglabājas šajā pārlūkā";
   const box = $("#drive-box");
+  if (box && store.mode === "server") box.innerHTML = `<div><span class="eyebrow">Grāmatvedim</span></div><p class="hint">Katrs izrakstītais rēķins automātiski kļūst pieejams grāmatvedim (lapā “Grāmatvedei”). Ja rēķini izrakstīti pirms šīs funkcijas, nosūti tos vienreiz:</p><div><button class="btn" type="button" onclick="srvPdfAll()">Nosūtīt visus izrakstītos rēķinus grāmatvedim</button></div>`;
   if (box && store.mode === "local") box.innerHTML = `<div><span class="eyebrow">Google Drive</span></div>
     <label class="f">Google Client ID<input type="text" id="s-gclient" value="${esc(gcid())}" placeholder="123456789-abc.apps.googleusercontent.com"></label>
     <label class="f">Google konts (e-pasts)<input type="text" id="s-ghint" value="${esc(ghint())}" placeholder="${DEFAULT_GHINT}"></label>
@@ -1160,7 +1181,7 @@ $("#drive-btn").addEventListener("click", driveConnect);
   S.clients = data.clients || []; S.invoices = data.invoices || []; S.loaded = true;
   $("#store-note").textContent = store.mode === "db" ? "Dati saglabājas tavā kontā" : store.mode === "server" ? "Dati saglabājas serverī (Cloudflare)" : "Dati saglabājas šajā pārlūkā";
   render();
-  $("#tab-receipts").hidden = !rcAvailable();
+  $("#tab-receipts").hidden = !rcAvailable(); $("#tab-bank").hidden = store.mode !== "server";
   driveUI(); lockUI(); idleReset();
   driveResume();
 })();
