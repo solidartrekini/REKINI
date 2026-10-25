@@ -138,7 +138,7 @@ function askToken(msg) {
 }
 const ACC = /[?&]acc=1/.test(location.search); // grāmatveža skats: tikai apskate un lejupielāde
 const ADMIN = /[?&]admin=1/.test(location.search) || ACC;
-const HOME = /[?&]home=1/.test(location.search) && ADMIN && !ACC; // "Mājas čeki": atsevišķs saraksts, tikai administratoram
+const HOME = /[?&]home=1/.test(location.search) && !ACC; // "Mājas čeki": atsevišķs saraksts, tikai administratoram
 const RP = HOME ? "home" : "receipts";
 if (HOME) { document.addEventListener("DOMContentLoaded", () => { const h = document.getElementById("h1-t"); if (h) h.textContent = "Mājas čeki"; document.title = "Mājas čeki"; }); }
 const MEM = new Map();
@@ -150,10 +150,10 @@ const store = {
     try { const r = await fetch("api/ping", { cache: "no-store" }); const j = r.ok ? await r.json() : null; if (j && j.ok && j.db) { this.mode = "server"; this.locked = !!j.receiptsLocked; } } catch (e) {}
   },
   async srv(path, opt = {}, retry = true) {
-    const headers = {}, key = ACC ? "rr-atoken" : ADMIN ? "rr-token" : "rr-rtoken";
-    if (ADMIN || this.locked) {
+    const headers = {}, key = ACC ? "rr-atoken" : (ADMIN || HOME) ? "rr-token" : "rr-rtoken";
+    if (ADMIN || HOME || this.locked) {
       let t = ""; try { t = localStorage.getItem(key) || ""; } catch (e) {}
-      if (!t) { t = await askToken(ACC ? "Ievadi grāmatveža atslēgu:" : ADMIN ? "Ievadi rēķinu rīka paroli:" : "Ievadi čeku piekļuves atslēgu:"); if (t) try { localStorage.setItem(key, t); } catch (e) {} }
+      if (!t) { t = await askToken(ACC ? "Ievadi grāmatveža atslēgu:" : (ADMIN || HOME) ? "Ievadi rēķinu rīka paroli:" : "Ievadi čeku piekļuves atslēgu:"); if (t) try { localStorage.setItem(key, t); } catch (e) {} }
       headers.Authorization = "Bearer " + t;
     }
     const r = await fetch("api/" + path, { ...opt, headers });
@@ -479,7 +479,7 @@ function listView() {
     </div>
     ${S.busy ? `<p class="hint">${esc(S.busy)}</p>` : ""}
     ${OCR.busy ? `<p class="hint">Atpazīst tekstu čekiem (${OCR.busy})… Pirmoreiz tiek ielādēti valodas dati, tas var aizņemt kādu brīdi.</p>` : ""}`}
-    ${ADMIN ? "" : `<p class="hint">Šeit var tikai pievienot čekus. Saglabātie čeki, meklēšana un arhīvs ir rēķinu rīkā.</p>`}
+    ${ADMIN ? "" : `<p class="hint">${HOME ? "Mājas čeki: šeit var tikai pievienot. Saraksts ir rēķinu rīkā, cilnē “Mājas čeki”." : "Šeit var tikai pievienot čekus. Saglabātie čeki, meklēšana un arhīvs ir rēķinu rīkā."}</p>`}
     ${ADMIN ? `<div class="summary">
       <div><span class="eyebrow">Čeki</span><b>${rows.length}</b></div>
       <div><span class="eyebrow">Summa</span><b>${money(sum)} €</b></div>
