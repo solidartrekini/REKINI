@@ -5,9 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="robots" content="noindex, nofollow">
 <title>Mājas čeki</title>
-<link rel="manifest" href="majas-ceki.webmanifest">
-<link rel="icon" href="icon-192.png">
-<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="../icon-192.png">
+<link rel="apple-touch-icon" href="../icon-192.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Mājas čeki">
 <meta name="theme-color" content="#9e2a35">
@@ -15,10 +15,10 @@
 </head>
 <body>
 <!-- Slēpta lapa mājas čeku pievienošanai (nav piesaistīta no citām lapām). Telefonā: pievieno sākuma ekrānam. -->
-<iframe id="f" src="cekus.html?home=1" title="Mājas čeki" allow="camera"></iframe>
+<iframe id="f" src="../cekus.html?home=1" title="Mājas čeki" allow="camera"></iframe>
 <script>
-// Kopīgošana (Android Share): sw.js novirza uz majas-ceki.html?shared=N; nodod to iekšējai lapai
-var m = /[?&]shared=(\d+)/.exec(location.search); if (m) document.getElementById("f").src = "cekus.html?home=1&shared=" + m[1];
+// Kopīgošana (Android Share): sw.js novirza uz majas/?shared=N; nodod to iekšējai lapai
+var m = /[?&]shared=(\d+)/.exec(location.search); if (m) document.getElementById("f").src = "../cekus.html?home=1&shared=" + m[1];
 </script>
 </body>
 </html>
