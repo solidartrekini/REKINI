@@ -99,7 +99,7 @@ input[type=file] { display: none }
 </style></head><body>
 <header class="bar"><div class="wrap">
   <a href="./" id="home">← Sākums</a>
-  <div class="brand"><h1>Čeki</h1></div>
+  <div class="brand"><h1 id="h1-t">Čeki</h1></div>
   <span class="store-note" id="store-note">Ielādē…</span>
 </div></header>
 <main class="wrap" id="app"></main>
@@ -138,6 +138,9 @@ function askToken(msg) {
 }
 const ACC = /[?&]acc=1/.test(location.search); // grāmatveža skats: tikai apskate un lejupielāde
 const ADMIN = /[?&]admin=1/.test(location.search) || ACC;
+const HOME = /[?&]home=1/.test(location.search) && ADMIN && !ACC; // "Mājas čeki": atsevišķs saraksts, tikai administratoram
+const RP = HOME ? "home" : "receipts";
+if (HOME) { document.addEventListener("DOMContentLoaded", () => { const h = document.getElementById("h1-t"); if (h) h.textContent = "Mājas čeki"; document.title = "Mājas čeki"; }); }
 const MEM = new Map();
 /* ---------- glabāšana: serveris (Cloudflare D1) vai pārlūka IndexedDB ---------- */
 const store = {
@@ -167,38 +170,38 @@ const store = {
   },
   req(r) { return new Promise((res, rej) => { r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); }); },
   async list() {
-    if (this.mode === "server") return (await this.srv("receipts")).json();
+    if (this.mode === "server") return (await this.srv(RP)).json();
     const db = await this.idb(); return this.req(db.transaction("r").objectStore("r").getAll());
   },
   async put(rec) {
     rec.updatedAt = Date.now();
-    if (this.mode === "server") { const { id, ...rest } = rec; await this.srv("receipts/" + id, { method: "PUT", body: JSON.stringify(rest) }); }
+    if (this.mode === "server") { const { id, ...rest } = rec; await this.srv(RP + "/" + id, { method: "PUT", body: JSON.stringify(rest) }); }
     else { const db = await this.idb(); await this.req(db.transaction("r", "readwrite").objectStore("r").put(rec)); }
   },
   async putImg(id, blob, rid) {
     MEM.set(id, blob);
-    if (this.mode === "server") { await this.srv(`receipts/${id}/img` + (rid && rid !== id ? "?r=" + rid : ""), { method: "PUT", body: await blobToB64(blob) }); }
+    if (this.mode === "server") { await this.srv(`${RP}/${id}/img` + (rid && rid !== id ? "?r=" + rid : ""), { method: "PUT", body: await blobToB64(blob) }); }
     else { const db = await this.idb(); await this.req(db.transaction("i", "readwrite").objectStore("i").put(blob, id)); }
   },
   async getImg(id) {
     if (MEM.has(id)) return MEM.get(id);
-    if (this.mode === "server") return (await this.srv(`receipts/${id}/img`)).blob();
+    if (this.mode === "server") return (await this.srv(`${RP}/${id}/img`)).blob();
     const db = await this.idb(); return this.req(db.transaction("i").objectStore("i").get(id));
   },
   async dup(hash, key, exclude) {
     if (this.mode === "server") {
       const q = new URLSearchParams(); if (hash) q.set("hash", hash); if (key) q.set("key", key); if (exclude) q.set("exclude", exclude);
-      try { return await (await this.srv("receipts/dup?" + q)).json(); } catch (e) { return { hash: false, key: false }; }
+      try { return await (await this.srv(RP + "/dup?" + q)).json(); } catch (e) { return { hash: false, key: false }; }
     }
     const all = await this.list();
     return { hash: !!hash && all.some(r => r.id !== exclude && (r.hashes || []).includes(hash)), key: !!key && all.some(r => r.id !== exclude && r.dupKey === key) };
   },
   async delImg(id) {
-    if (this.mode === "server") await this.srv(`receipts/${id}/img`, { method: "DELETE" });
+    if (this.mode === "server") await this.srv(`${RP}/${id}/img`, { method: "DELETE" });
     else { const db = await this.idb(); await this.req(db.transaction("i", "readwrite").objectStore("i").delete(id)); }
   },
   async del(id, imgIds) {
-    if (this.mode === "server") await this.srv("receipts/" + id, { method: "DELETE" });
+    if (this.mode === "server") await this.srv(RP + "/" + id, { method: "DELETE" });
     else { const db = await this.idb(); const t = db.transaction(["r", "i"], "readwrite"); t.objectStore("r").delete(id); for (const i of new Set([id, ...(imgIds || [])])) t.objectStore("i").delete(i); await new Promise(r => t.oncomplete = r); }
   }
 };
