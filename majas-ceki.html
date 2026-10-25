@@ -15,6 +15,10 @@
 </head>
 <body>
 <!-- Slēpta lapa mājas čeku pievienošanai (nav piesaistīta no citām lapām). Telefonā: pievieno sākuma ekrānam. -->
-<iframe src="cekus.html?home=1" title="Mājas čeki" allow="camera"></iframe>
+<iframe id="f" src="cekus.html?home=1" title="Mājas čeki" allow="camera"></iframe>
+<script>
+// Kopīgošana (Android Share): sw.js novirza uz majas-ceki.html?shared=N; nodod to iekšējai lapai
+var m = /[?&]shared=(\d+)/.exec(location.search); if (m) document.getElementById("f").src = "cekus.html?home=1&shared=" + m[1];
+</script>
 </body>
 </html>
