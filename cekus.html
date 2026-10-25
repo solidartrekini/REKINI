@@ -880,6 +880,15 @@ if (window.top !== window.self) { const bar = $(".bar"); if (bar) bar.hidden = t
   if (!ADMIN && "serviceWorker" in navigator && location.protocol.startsWith("http")) navigator.serviceWorker.register("sw.js").catch(() => {});
   const m = ADMIN && /[#&]open=([^&]+)/.exec(location.hash); if (m) { const r = S.list.find(x => x.id === decodeURIComponent(m[1])); if (r) { S.cur = r; S.page = 0; } }
   render();
+  if (!ADMIN && !HOME && /[?&]shared=(\d+)/.test(location.search) && window.caches) {
+    // Android Share: pajautā, vai saglabāt uzņēmuma čekos vai mājas čekos
+    const where = await new Promise(res => {
+      const el = document.createElement("div"); el.style.cssText = "position:fixed;inset:0;z-index:300;background:rgba(0,0,0,.6);display:grid;place-items:center;padding:16px";
+      el.innerHTML = '<div style="background:#fff;color:#18201e;border-radius:10px;padding:18px;max-width:340px;width:100%;display:grid;gap:10px"><b>Kur saglabāt saņemtos failus?</b><button type="button" data-w="co" class="btn big primary">Uzņēmuma čeki</button><button type="button" data-w="home" class="btn big">Mājas čeki</button></div>';
+      el.addEventListener("click", e => { const b = e.target.closest("[data-w]"); if (b) { el.remove(); res(b.dataset.w); } }); document.body.appendChild(el);
+    });
+    if (where === "home") { location.replace("majas/" + location.search.replace(/^\?.*?(shared=\d+).*$/, "?$1")); return; }
+  }
   if (!ADMIN && /[?&]shared=(\d+)/.test(location.search) && window.caches) {
     try {
       const c = await caches.open("rr-share"), files = [];
