@@ -142,6 +142,7 @@ const ALIAS = {
 function fromSwedbankPlain(rows) {
   const ok = r => r.length >= 8 && /^\d{2}$/.test(String(r[1]).trim()) && /^\d{1,2}[./-]\d{1,2}[./-]\d{4}$/.test(String(r[2]).trim());
   if (!rows.slice(0, 3).some(ok)) return null;
+  const acc = String((rows.find(ok) || [])[0] || "").trim(), opn = rows.find(r => ok(r) && String(r[1]).trim() === "10");
   const out = [], own = (S.settings && S.settings.regNo) || "40103952422", pd8 = rows.filter(ok).map(r => parseDate(r[2])).filter(Boolean).sort();
   for (const r of rows) {
     if (!ok(r) || String(r[1]).trim() !== "20") continue;
@@ -155,11 +156,14 @@ function fromSwedbankPlain(rows) {
     }
     const t = { date, amount: Math.round(amt * 100) / 100, name, desc, cur: String(r[6] || "").trim() };
     if (pdate) t.pdate = pdate;
+    if (String(r[8] || "").trim()) t.ref = String(r[8]).trim();
     if (code === "KOM") t.kind = "Bankas komisija";
     else if (party.includes(own) || /^\d{11}$/.test(party[1] || "") && party[1] === own) t.kind = "Pārvedums starp saviem kontiem";
     out.push(t);
   }
   if (out.length && pd8.length) out.period = [pd8[0], pd8[pd8.length - 1]];
+  if (out.length && /^LV\d{2}[A-Z]{4}\w{13}$/.test(acc)) out.acc = acc;
+  if (out.length && opn) { const d0 = parseDate(opn[2]), v = parseAmount(opn[5]); if (d0 && !isNaN(v)) out.anchor = { date: d0, bal: Math.round((/^d/i.test(String(opn[7]).trim()) ? -Math.abs(v) : Math.abs(v)) * 100) / 100 }; }
   return out.length ? out : null;
 }
 function fromCsv(text) {
@@ -257,6 +261,8 @@ async function saveStatement(list, filename, period) {
     txs.splice(0, txs.length, ...tmp.txs);
     const per = period || [list.map(t => t.date).sort()[0], list.map(t => t.date).sort().pop()];
     const doc = { txs, links: tmp.links, ignore: tmp.ignore, invLinks: tmp.invLinks, file: filename, periods: [...(old.periods || []), per], updatedAt: Date.now() };
+    const acc0 = list.acc || old.acc; if (acc0) doc.acc = acc0;
+    const an0 = list.anchor && (!old.anchor || list.anchor.date < old.anchor.date) ? list.anchor : old.anchor; if (an0) doc.anchor = an0;
     await srv("acc/bank/" + mk, { method: "PUT", body: JSON.stringify(doc) });
   }
   return months;
@@ -338,6 +344,8 @@ function monthView() {
       <label class="row" style="gap:6px"><input type="checkbox" id="show-in"${S.showIn ? " checked" : ""}> Rādīt ienākošos (${ins.length})</label>
       <span style="flex:1"></span>
       <button class="btn" data-act="csv">Atskaite (CSV)</button>
+      <button class="btn" data-act="pdf">Atskaite (PDF)</button>
+      <button class="btn" data-act="fida">Eksportēt FiDAViSta (XML)</button>
       <button class="btn" data-act="zip"${have ? "" : " disabled"}>Lejupielādēt čekus (ZIP)</button>
       ${ACC ? "" : `<button class="btn danger" data-act="del-month">Dzēst šo izrakstu</button>`}
     </div>
@@ -430,6 +438,78 @@ async function loadStatement(f) {
   } catch (err) { console.error(err); toast("Neizdevās: " + err.message); }
 }
 $("#f-bank").addEventListener("change", e => { const f = e.target.files && e.target.files[0]; e.target.value = ""; if (f) loadStatement(f); });
+/* ---------- eksports: FiDAViSta XML un PDF ---------- */
+const xe = v => String(v ?? "").replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+const amt2 = n => (Math.round(Math.abs(n) * 100) / 100).toFixed(2);
+const lastDay = mk => { const [y, m] = mk.split("-").map(Number); return `${mk}-${String(new Date(y, m, 0).getDate()).padStart(2, "0")}`; };
+function monthBalances(mk) {
+  const all = S.banks.flatMap(b => b.txs), start = mk + "-01", end = lastDay(mk);
+  const anchors = S.banks.map(b => b.anchor).filter(a => a && a.date <= start).sort((x, y) => y.date.localeCompare(x.date));
+  const inM = all.filter(t => t.date >= start && t.date <= end), net = inM.reduce((a, t) => a + t.amount, 0);
+  if (!anchors.length) return { open: null, close: null, net };
+  const an = anchors[0], before = all.filter(t => t.date >= an.date && t.date < start).reduce((a, t) => a + t.amount, 0);
+  const open = Math.round((an.bal + before) * 100) / 100;
+  return { open, close: Math.round((open + net) * 100) / 100, net };
+}
+function saveText(name, text, type) { saveBlob(name, new Blob([text], { type })); }
+function fidavistaXml() {
+  const b = S.banks.find(x => x.id === S.month); if (!b) return;
+  const acc = b.acc || (S.banks.find(x => x.acc) || {}).acc || "", bal = monthBalances(S.month), co = (S.settings && S.settings.name) || 'SIA "SOLIDART"', reg = (S.settings && S.settings.regNo) || "40103952422";
+  const ts = new Date(), p2 = n => String(n).padStart(2, "0"), stamp = `${ts.getFullYear()}${p2(ts.getMonth() + 1)}${p2(ts.getDate())}${p2(ts.getHours())}${p2(ts.getMinutes())}${p2(ts.getSeconds())}000`;
+  const trx = b.txs.slice().sort((x, y) => x.date.localeCompare(y.date)).map((t, i) => {
+    const d = t.amount < 0, code = t.kind === "Bankas komisija" ? "MEMD" : t.kind ? "INTR" : d ? "OUTP" : "INP", ref = (t.ref || ("T" + String(i + 1).padStart(5, "0"))).slice(0, 25);
+    const info = (t.desc || t.name || "-").slice(0, 200);
+    return `<TrxSet><TypeCode>${code}</TypeCode><BookDate>${t.date}</BookDate>${t.pdate ? `<ValueDate>${t.pdate}</ValueDate>` : ""}<BankRef>${xe(ref)}</BankRef><CorD>${d ? "D" : "C"}</CorD><AccAmt>${amt2(t.amount)}</AccAmt><PmtInfo>${xe(info)}</PmtInfo>${t.name ? `<CPartySet><AccHolder><Name>${xe(t.name.slice(0, 140))}</Name></AccHolder></CPartySet>` : ""}</TrxSet>`;
+  }).join("\n");
+  const ccy = (b.txs.find(t => t.cur) || {}).cur || "EUR";
+  const xml = `<?xml version="1.0" encoding="UTF-8" ?>\n<FIDAVISTA xmlns="http://bankasoc.lv/fidavista/fidavista_1-2.xsd">\n<Header><Timestamp>${stamp}</Timestamp><From>${xe(co)}</From></Header>\n<Statement>\n<Period><StartDate>${S.month}-01</StartDate><EndDate>${lastDay(S.month)}</EndDate><PrepDate>${ts.getFullYear()}-${p2(ts.getMonth() + 1)}-${p2(ts.getDate())}</PrepDate></Period>\n<ClientSet><Name>${xe(co)}</Name><LegalID>${xe(reg)}</LegalID></ClientSet>\n<AccountSet><AccNo>${xe(acc || "-")}</AccNo><CcyStmt><Ccy>${xe(ccy)}</Ccy><OpenBal>${bal.open == null ? "0.00" : amt2(bal.open)}</OpenBal>${bal.close == null ? "" : `<CloseBal>${amt2(bal.close)}</CloseBal>`}\n${trx}\n</CcyStmt></AccountSet>\n</Statement>\n</FIDAVISTA>\n`;
+  saveText(`Banka_${S.month}_FiDAViSta.xml`, xml, "application/xml");
+  toast(bal.open == null || !acc ? "FiDAViSta saglabāts, bet " + (!acc ? "konta numurs" : "sākuma atlikums") + " nav zināms (ielādē izrakstu CSV vēlreiz, lai tas tiktu saglabāts)." : "FiDAViSta fails saglabāts");
+}
+async function pdfReport() {
+  const b = S.banks.find(x => x.id === S.month); if (!b) return;
+  toast("Veido PDF…");
+  try {
+    if (!window.PDFLib) await loadScriptOnce("https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js");
+    if (!window.fontkit) await loadScriptOnce("https://cdn.jsdelivr.net/npm/@pdf-lib/fontkit@1.1.1/dist/fontkit.umd.min.js");
+    const [fr, fb] = await Promise.all([fetch("fonts/regular.ttf").then(r => r.arrayBuffer()), fetch("fonts/bold.ttf").then(r => r.arrayBuffer())]);
+    const { PDFDocument, rgb } = PDFLib, doc = await PDFDocument.create(); doc.registerFontkit(fontkit);
+    const F = await doc.embedFont(fr, { subset: true }), FB = await doc.embedFont(fb, { subset: true });
+    const W = 842, H = 595, M = 32, cols = [M, M + 62, M + 330, M + 430, M + 520], right = W - M;
+    const { res } = matchAll(), recById = new Map(S.receipts.map(r => [r.id, r])), { res: ires } = matchInvoices(), invById = new Map(S.invoices.map(i => [i.id, i]));
+    const bal = monthBalances(S.month), acc = b.acc || (S.banks.find(x => x.id === S.month) || {}).acc || "";
+    const wrap = (t, f, sz, w) => { const out = []; for (const para of String(t || "").split(/\n/)) { let line = ""; for (const wd of para.split(/\s+/)) { const tryL = line ? line + " " + wd : wd; if (f.widthOfTextAtSize(tryL, sz) <= w) line = tryL; else { if (line) out.push(line); line = wd; while (f.widthOfTextAtSize(line, sz) > w && line.length > 1) { let k = line.length - 1; while (k > 1 && f.widthOfTextAtSize(line.slice(0, k), sz) > w) k--; out.push(line.slice(0, k)); line = line.slice(k); } } } out.push(line); } return out; };
+    let page, y; const ink = rgb(.09, .12, .11), mute = rgb(.4, .45, .43), red = rgb(.62, .16, .21);
+    const newPage = first => { page = doc.addPage([W, H]); y = H - M; if (first) return;
+      page.drawText("Konta pārskats " + monthName(S.month), { x: M, y: y - 10, size: 10, font: FB, color: mute }); y -= 26; header(); };
+    const header = () => { page.drawText("Datums", { x: cols[0], y: y - 9, size: 8.5, font: FB, color: mute }); page.drawText("Saņēmējs / apraksts", { x: cols[1], y: y - 9, size: 8.5, font: FB, color: mute });
+      const t = "Summa, EUR"; page.drawText(t, { x: cols[3] + 80 - FB.widthOfTextAtSize(t, 8.5), y: y - 9, size: 8.5, font: FB, color: mute }); page.drawText("Čeks / rēķins", { x: cols[4], y: y - 9, size: 8.5, font: FB, color: mute });
+      y -= 16; page.drawLine({ start: { x: M, y }, end: { x: right, y }, thickness: .6, color: mute }); y -= 4; };
+    newPage(true);
+    page.drawText("Konta pārskats " + monthName(S.month), { x: M, y: y - 16, size: 16, font: FB, color: ink }); y -= 26;
+    const co = (S.settings && S.settings.name) || 'SIA "SOLIDART"';
+    page.drawText(co + (acc ? " · " + acc : ""), { x: M, y: y - 10, size: 10, font: F, color: mute }); y -= 16;
+    const bl = bal.open == null ? "" : `Sākuma atlikums ${money(bal.open)} €  ·  Beigu atlikums ${money(bal.close)} €  ·  Apgrozījums ${money(bal.net)} €`;
+    if (bl) { page.drawText(bl, { x: M, y: y - 10, size: 10, font: F, color: mute }); y -= 16; }
+    const outs = b.txs.filter(t => t.amount < 0), miss = outs.filter(t => !res.has(t.id) && !t.kind && !(b.ignore || {})[t.id]).length;
+    page.drawText(`Maksājumi: ${b.txs.length}  ·  Trūkst čeka: ${miss}  ·  Sagatavots ${new Date().toLocaleDateString("lv-LV")}`, { x: M, y: y - 10, size: 10, font: F, color: mute }); y -= 22;
+    header();
+    for (const t of b.txs.slice().sort((x, y) => x.date.localeCompare(y.date))) {
+      const m = res.get(t.id), r = m && recById.get(m.rid), out = t.amount < 0, im = !out && ires.get(t.id), iv = im && invById.get(im.iid);
+      const st = !out ? (iv ? `Rēķins ${iv.number} · ${iv.client || ""}` : t.kind || ((b.ignore || {})[t.id] ? "Rēķins nav vajadzīgs" : "Trūkst rēķina")) : r ? `Čeks: ${(r.shop && r.shop.name) || "Bez veikala"} ${fmtDate(r.date)}` : t.kind || ((b.ignore || {})[t.id] ? "Čeks nav vajadzīgs" : "Trūkst čeka");
+      const missing = out ? !r && !t.kind && !(b.ignore || {})[t.id] : !iv && !t.kind && !(b.ignore || {})[t.id];
+      const l1 = wrap([t.name, t.desc].filter(Boolean).join(" — ") || "—", F, 8.5, cols[3] - cols[1] - 8), l2 = wrap(st, missing ? FB : F, 8.5, right - cols[4]), n = Math.max(l1.length, l2.length, 1), h = n * 11 + 4;
+      if (y - h < M + 14) { newPage(false); }
+      page.drawText(fmtDate(t.date), { x: cols[0], y: y - 9, size: 8.5, font: F, color: ink });
+      l1.forEach((ln, i) => page.drawText(ln, { x: cols[1], y: y - 9 - i * 11, size: 8.5, font: F, color: ink }));
+      const a = money(t.amount); page.drawText(a, { x: cols[3] + 80 - F.widthOfTextAtSize(a, 8.5), y: y - 9, size: 8.5, font: F, color: ink });
+      l2.forEach((ln, i) => page.drawText(ln, { x: cols[4], y: y - 9 - i * 11, size: 8.5, font: missing ? FB : F, color: missing ? red : ink }));
+      y -= h; page.drawLine({ start: { x: M, y }, end: { x: right, y }, thickness: .3, color: rgb(.8, .82, .81) });
+    }
+    const pages = doc.getPages(); pages.forEach((pg, i) => { const t = `${i + 1} / ${pages.length}`; pg.drawText(t, { x: right - F.widthOfTextAtSize(t, 8), y: 16, size: 8, font: F, color: mute }); });
+    saveBlob(`Banka_${S.month}_parskats.pdf`, new Blob([await doc.save()], { type: "application/pdf" })); toast("PDF saglabāts");
+  } catch (e) { console.error(e); toast("PDF neizdevās izveidot: " + e.message); }
+}
 function csvReport() {
   const b = S.banks.find(x => x.id === S.month); if (!b) return;
   const { res } = matchAll(), recById = new Map(S.receipts.map(r => [r.id, r])), { res: ires } = matchInvoices(), invById = new Map(S.invoices.map(i => [i.id, i]));
@@ -497,6 +577,8 @@ document.addEventListener("click", async e => {
     const act = e.target.closest("[data-act]") && e.target.closest("[data-act]").dataset.act;
     if (act === "pick") $("#f-bank").click();
     else if (act === "csv") csvReport();
+    else if (act === "pdf") pdfReport();
+    else if (act === "fida") fidavistaXml();
     else if (act === "zip") await zipMonth();
     else if (act === "del-month" && b && !ACC) {
       if (!confirm(`Dzēst ${monthName(S.month)} bankas izrakstu?`)) return;
