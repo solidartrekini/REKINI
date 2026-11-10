@@ -960,7 +960,7 @@ function clientsView() {
         <label class="f only-company">PVN nr.<input type="text" id="c-vatNo" value="${esc(c.vatNo)}" placeholder="LV40000000000"></label>
         <label class="f span2 only-person">Personas kods (nav obligāts)<input type="text" id="c-personCode" value="${esc(c.personCode || "")}" placeholder="010190-12345"></label>
         <label class="f span2"><span class="only-company">Juridiskā adrese</span><span class="only-person">Adrese (nav obligāta)</span><input type="text" id="c-address" value="${esc(c.address)}"></label>
-        <label class="f span2">E-pasts<input type="email" id="c-email" value="${esc(c.email)}"></label>
+        <label class="f span2">E-pasts (nav obligāts)<input type="email" id="c-email" value="${esc(c.email)}"></label>
       </div>
       <div class="row"><button class="btn primary" type="submit">Saglabāt klientu</button>${c.id ? (S.confirmDel ? `<span class="confirm">Dzēst klientu? <button class="btn danger" type="button" data-act="client-del-yes">Dzēst</button><button class="btn" type="button" data-act="del-no">Atcelt</button></span>` : `<button class="btn danger" type="button" data-act="client-del">Dzēst</button>`) : ""}</div>
       ${c.id ? '<p class="hint">Izmaiņas nemaina jau izrakstītos rēķinus. Tajos saglabāti klienta dati izrakstīšanas brīdī.</p>' : ""}
