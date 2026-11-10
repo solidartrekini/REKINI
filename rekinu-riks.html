@@ -96,6 +96,9 @@ table.list .r { text-align: right }
 .pill.issued { background: var(--warn-soft); color: var(--warn) }
 .pill.paid { background: var(--ok-soft); color: var(--ok) }
 .pill.overdue { background: var(--bad-soft); color: var(--bad) }
+.pill.kind { background: var(--surface-2); color: var(--accent); box-shadow: inset 0 0 0 1px var(--line) }
+.adv { display: grid; grid-template-columns: minmax(0, 1fr) 150px 110px 32px; gap: 6px; align-items: end }
+@media (max-width: 560px) { .adv { grid-template-columns: 1fr 1fr 32px } .adv .an { grid-column: 1 / -1 } }
 .empty { padding: 32px 18px; text-align: center; color: var(--muted) }
 .filters { display: flex; gap: 8px; flex-wrap: wrap }
 .filters select, .filters input { width: auto }
@@ -353,7 +356,7 @@ async function downloadZip(period) {
     for (const inv of list.sort((a, b) => a.date.localeCompare(b.date) || a.number.localeCompare(b.number))) {
       toast(`Veido PDF ${files.length + 1}/${list.length}…`);
       const [yy, mm] = inv.date.split("-");
-      files.push({ name: `${yy}/${mm} ${MONTHS[Number(mm) - 1]}/Rekins_${inv.number.replace(/[^\w.-]+/g, "_")}.pdf`, data: await buildPdfBytes(inv) });
+      files.push({ name: `${yy}/${mm} ${MONTHS[Number(mm) - 1]}/${pdfFileName(inv)}`, data: await buildPdfBytes(inv) });
     }
     await saveFile(period === "all" ? "Rekini_visi.zip" : `Rekini_${period}.zip`, makeZip(files));
     toast(`ZIP gatavs: ${files.length} rēķini`);
@@ -370,6 +373,12 @@ const DEFAULT_SETTINGS = {
 const S = { sort: { k: "date", d: -1 }, settings: { ...DEFAULT_SETTINGS }, clients: [], invoices: [], tab: "invoices", editing: null, filter: "all", q: "", clientEditing: null, loaded: false };
 const VAT_RATES = [21, 12, 5, 0];
 const STATUS = { draft: "Melnraksts", issued: "Izrakstīts", paid: "Apmaksāts", overdue: "Kavēts" };
+const KINDS = { invoice: "Parasts rēķins", advance: "Avansa rēķins", final: "Gala rēķins" };
+const kindOf = inv => inv.kind === "advance" || inv.kind === "final" ? inv.kind : "invoice";
+const docTitle = (inv, vp) => kindOf(inv) === "advance" ? (vp ? "Avansa PVN rēķins" : "Avansa rēķins") : kindOf(inv) === "final" ? (vp ? "Gala PVN rēķins" : "Gala rēķins") : (vp ? "PVN rēķins" : "Rēķins");
+const pdfFileName = inv => `${kindOf(inv) === "advance" ? "Avansa_rekins" : kindOf(inv) === "final" ? "Gala_rekins" : "Rekins"}_${String(inv.number).replace(/[^\w.-]+/g, "_")}.pdf`;
+const advList = inv => kindOf(inv) === "final" ? (inv.advances || []) : [];
+const advLabel = a => "Apmaksātais avanss" + (a.number ? " (rēķins Nr. " + a.number + (a.date ? ", " + fmtDate(a.date) : "") + ")" : a.date ? " (" + fmtDate(a.date) + ")" : "");
 
 function statusOf(inv) { return inv.status === "issued" && inv.due && inv.due < today() ? "overdue" : inv.status; }
 function totals(inv, vatPayer) {
@@ -381,7 +390,8 @@ function totals(inv, vatPayer) {
   }
   const vats = Object.keys(byRate).map(Number).sort((a, b) => b - a).map(r => ({ rate: r, base: round2(byRate[r]), vat: round2(byRate[r] * r / 100) }));
   const vat = round2(vats.reduce((s, v) => s + v.vat, 0));
-  return { net: round2(net), vats, vat, total: round2(net + vat) };
+  const total = round2(net + vat), adv = round2(advList(inv).reduce((a, x) => a + (Number(x.amount) || 0), 0));
+  return { net: round2(net), vats, vat, total, adv, pay: round2(total - adv) };
 }
 function nextNumber(dateIso, excludeId) {
   const s = S.settings; const year = (dateIso || today()).slice(0, 4);
@@ -407,7 +417,7 @@ function sheetHTML(inv) {
     ${inv.example ? `<div class="example">Paraugs · aizstāj ar saviem datiem</div>` : ""}
     <div class="top">
       <div><div class="seller-name">${esc(seller.name || "Jūsu uzņēmums")}</div><div class="muted">${esc(seller.address || "")}</div></div>
-      <div class="doc-title"><h2>${vp ? "PVN rēķins" : "Rēķins"}</h2><div class="no">Nr. ${esc(inv.number)}</div></div>
+      <div class="doc-title"><h2>${docTitle(inv, vp)}</h2><div class="no">Nr. ${esc(inv.number)}</div></div>
     </div>
     <div class="dates">
       <div><span class="muted">Izrakstīšanas datums</span><b>${fmtDate(inv.date)}</b></div>
@@ -427,11 +437,11 @@ function sheetHTML(inv) {
     <dl class="tot">
       <dt>Summa bez PVN</dt><dd>${money(t.net)}</dd>
       ${vp ? t.vats.map(v => `<dt>PVN ${v.rate}% no ${money(v.base)}</dt><dd>${money(v.vat)}</dd>`).join("") : ""}
-      <dt class="grand">Kopā apmaksai, EUR</dt><dd class="grand">${money(t.total)}</dd>
+      ${advList(inv).length ? `${vp ? `<dt>Kopā, EUR</dt><dd>${money(t.total)}</dd>` : ""}${advList(inv).map(a => `<dt>${esc(advLabel(a))}</dt><dd>−${money(a.amount)}</dd>`).join("")}<dt class="grand">Atlikusī summa apmaksai, EUR</dt><dd class="grand">${money(t.pay)}</dd>` : `<dt class="grand">${kindOf(inv) === "advance" ? "Avanss apmaksai, EUR" : "Kopā apmaksai, EUR"}</dt><dd class="grand">${money(t.pay)}</dd>`}
     </dl>
-    <div class="words"><span class="muted">Summa vārdiem:</span> ${esc(sumWords(t.total))}</div>
+    <div class="words"><span class="muted">Summa vārdiem:</span> ${esc(sumWords(t.pay))}</div>
     ${inv.notes ? `<div>${esc(inv.notes).replace(/\n/g, "<br>")}</div>` : ""}
-    <div class="foot">${!vp ? "<div>Piegādātājs nav reģistrēts PVN maksātāju reģistrā.</div>" : ""}<div>${esc(seller.footer || "")}</div>
+    <div class="foot">${kindOf(inv) === "advance" ? "<div>Avansa rēķins. Pēc darbu pabeigšanas tiks izrakstīts gala rēķins, kurā apmaksātais avanss tiks atskaitīts.</div>" : ""}${!vp ? "<div>Piegādātājs nav reģistrēts PVN maksātāju reģistrā.</div>" : ""}<div>${esc(seller.footer || "")}</div>
       <div>Maksājuma mērķī lūdzam norādīt rēķina numuru ${esc(inv.number)}.</div></div>
   </div>`;
 }
@@ -449,7 +459,7 @@ async function buildPdfBytes(inv) {
   const bold = await doc.embedFont(unb64(FONT_B), { subset: true });
   const sets = new Map([[reg, new Set(reg.getCharacterSet())], [bold, new Set(bold.getCharacterSet())]]);
   const safe = (str, f) => { const cs = sets.get(f); return [...String(str)].map(c => (c === "\n" || cs.has(c.codePointAt(0)) ? c : "?")).join(""); };
-  doc.setTitle("Rēķins " + inv.number); doc.setProducer("Rēķinu rīks"); doc.setCreator("Rēķinu rīks");
+  doc.setTitle(docTitle(inv, false) + " " + inv.number); doc.setProducer("Rēķinu rīks"); doc.setCreator("Rēķinu rīks");
   const seller = (inv._new || inv.status === "draft") ? S.settings : (inv.seller || S.settings);
   const buyer = (inv.status === "draft" || !inv.buyer) ? (S.clients.find(c => c.id === inv.clientId) || inv.buyer || {}) : inv.buyer;
   const vp = !!seller.vatPayer, t = totals(inv, vp);
@@ -486,7 +496,7 @@ async function buildPdfBytes(inv) {
   txt(seller.name || "Jūsu uzņēmums", M, 15, bold);
   const addr = wrap(seller.address || "", 270, 9);
   addr.forEach((l, i) => txt(l, M, 9, reg, MUT, "l", y + 21 + i * 12));
-  txt(vp ? "PVN rēķins" : "Rēķins", W - M, 22, bold, INK, "r", y - 2);
+  txt(docTitle(inv, vp), W - M, 22, bold, INK, "r", y - 2);
   txt("Nr. " + inv.number, W - M, 11, reg, INK, "r", y + 27);
   y += Math.max(62, 24 + addr.length * 12 + 16);
 
@@ -539,18 +549,24 @@ async function buildPdfBytes(inv) {
   });
 
   // kopsummas
-  const need = (2 + t.vats.length) * 16 + 34;
+  const advs = advList(inv);
+  const need = (2 + t.vats.length + (advs.length ? advs.length * 2 + 1 : 0)) * 16 + 34;
   if (y + need > H - M - 20) newPage();
   y += 12;
   const bx = W - M - 240, row = (label, val, b) => { txt(label, bx, b ? 11 : 9.5, b ? bold : reg, b ? INK : MUT); txt(val, W - M, b ? 11 : 9.5, b ? bold : reg, INK, "r"); y += b ? 18 : 15; };
   row("Summa bez PVN", num(t.net));
   if (vp) t.vats.forEach(v => row(`PVN ${v.rate}% no ${num(v.base)}`, num(v.vat)));
   y += 2; rule(bx, W - M, y, 1, INK); y += 6;
-  row("Kopā apmaksai, EUR", num(t.total), true);
+  if (advs.length) {
+    if (vp) row("Kopā, EUR", num(t.total));
+    advs.forEach(a => { const ls = wrap(advLabel(a), 170, 9.5); ls.forEach((l, i) => txt(l, bx, 9.5, reg, MUT, "l", y + i * 12)); txt("-" + num(a.amount), W - M, 9.5, reg, INK, "r"); y += (ls.length - 1) * 12 + 15; });
+    y += 2; rule(bx, W - M, y, 1, INK); y += 6;
+    row("Atlikusī summa apmaksai, EUR", num(t.pay), true);
+  } else row(kindOf(inv) === "advance" ? "Avanss apmaksai, EUR" : "Kopā apmaksai, EUR", num(t.pay), true);
 
   // summa vārdiem
   y += 8;
-  const wl = wrap(sumWords(t.total), CW - 14, 10);
+  const wl = wrap(sumWords(t.pay), CW - 14, 10);
   if (y + 12 + wl.length * 13 > H - M - 20) newPage();
   page.drawRectangle({ x: M, y: H - y - 12 - wl.length * 13, width: 2.5, height: 12 + wl.length * 13, color: ACC });
   txt("Summa vārdiem", M + 10, 8, reg, MUT, "l", y); wl.forEach((l, i) => txt(l, M + 10, 10, reg, INK, "l", y + 12 + i * 13));
@@ -560,6 +576,7 @@ async function buildPdfBytes(inv) {
 
   // kājene lapas apakšā
   const foot = [];
+  if (kindOf(inv) === "advance") foot.push("Avansa rēķins. Pēc darbu pabeigšanas tiks izrakstīts gala rēķins, kurā apmaksātais avanss tiks atskaitīts.");
   if (!vp) foot.push("Piegādātājs nav reģistrēts PVN maksātāju reģistrā.");
   if (seller.footer) foot.push(seller.footer);
   foot.push("Maksājuma mērķī lūdzam norādīt rēķina numuru " + inv.number + ".");
@@ -577,7 +594,7 @@ async function drivePdfQuiet(inv) {
   if (typeof PDFLib === "undefined" || typeof fontkit === "undefined") { toast("PDF bibliotēka nav ielādējusies, PDF nav saglabāts Drive."); return; }
   try {
     const blob = new Blob([await buildPdfBytes(inv)], { type: "application/pdf" });
-    await driveUploadPdf(`Rekins_${inv.number.replace(/[^\w.-]+/g, "_")}.pdf`, blob, inv.date);
+    await driveUploadPdf(`${pdfFileName(inv)}`, blob, inv.date);
     toast("Rēķins " + inv.number + " saglabāts Google Drive");
   } catch (e) { console.warn(e); toast("PDF neizdevās saglabāt Drive: " + e.message); }
 }
@@ -766,7 +783,7 @@ function importedDialog(inv) {
     <div class="row"><button class="btn" id="ip-open" type="button">Atvērt PDF</button><button class="btn" id="ip-dl" type="button">Lejupielādēt PDF</button><span class="spacer"></span><button class="btn danger" id="ip-del" type="button">Dzēst</button></div>
     <div class="row"><button class="btn primary" id="ip-save" type="button">Saglabāt</button><button class="btn" id="ip-close" type="button">Aizvērt</button></div></div>`;
   document.body.appendChild(el);
-  const name = `Rekins_${String(inv.number).replace(/[^\w.-]+/g, "_")}.pdf`;
+  const name = pdfFileName(inv);
   $("#ip-close").onclick = closeImp;
   importedPdfBytes(inv).then(u => { const box = $("#ip-view"); if (!box) return; const f = document.createElement("iframe"); f.src = URL.createObjectURL(new Blob([u], { type: "application/pdf" })); f.title = "Rēķina PDF"; f.style.cssText = "width:100%;height:100%;border:0;background:#fff"; box.innerHTML = ""; box.style.display = "block"; box.appendChild(f); }).catch(e => { const box = $("#ip-view"); if (box) box.innerHTML = '<span class="hint">PDF nav pieejams: ' + esc(e.message) + '</span>'; });
   $("#ip-open").onclick = async () => { const w = window.open("", "_blank"); try { const u = URL.createObjectURL(new Blob([await importedPdfBytes(inv)], { type: "application/pdf" })); if (w) w.location = u; else location.href = u; } catch (e) { if (w) w.close(); toast("Neizdevās atvērt PDF: " + e.message); } };
@@ -796,7 +813,7 @@ async function srvBlob(path) {
 /* ---------- rēķinu PDF grāmatvedim (tikai servera režīmā) ---------- */
 const u8b64 = u8 => { let s = ""; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); return btoa(s); };
 async function srvPdfSend(inv) {
-  const meta = { number: inv.number, date: inv.date, client: clientName(inv), total: totals(inv, inv.seller ? inv.seller.vatPayer : S.settings.vatPayer).total };
+  const meta = { number: inv.number, date: inv.date, client: clientName(inv), total: totals(inv, inv.seller ? inv.seller.vatPayer : S.settings.vatPayer).pay, kind: kindOf(inv) };
   await store.srv("acc/invoices/" + encodeURIComponent(inv.id), { method: "PUT", body: JSON.stringify({ meta, pdf: u8b64(await buildPdfBytes(inv)) }) });
 }
 async function srvPdfQuiet(inv) {
@@ -816,7 +833,7 @@ async function driveUploadAll() {
   if (!list.length) { toast("Nav izrakstītu rēķinu, ko saglabāt (melnraksti netiek augšupielādēti)"); return; }
   let n = 0, bad = 0;
   for (const inv of list) {
-    try { await driveUploadPdf(`Rekins_${inv.number.replace(/[^\w.-]+/g, "_")}.pdf`, new Blob([await buildPdfBytes(inv)], { type: "application/pdf" }), inv.date); n++; toast(`Drive: ${n}/${list.length}…`); }
+    try { await driveUploadPdf(`${pdfFileName(inv)}`, new Blob([await buildPdfBytes(inv)], { type: "application/pdf" }), inv.date); n++; toast(`Drive: ${n}/${list.length}…`); }
     catch (e) { console.warn(e); bad++; if (DRIVE.state === "expired") break; }
   }
   toast(bad ? `Saglabāti ${n}, neizdevās ${bad}. Pārbaudi Drive pieslēgumu.` : `Saglabāti Drive: ${n} rēķini`);
@@ -825,7 +842,7 @@ async function downloadPDF(inv) {
   if (typeof PDFLib === "undefined" || typeof fontkit === "undefined") { toast("PDF bibliotēka nav ielādējusies. Pārlādē lapu."); return; }
   try {
     const blob = new Blob([await buildPdfBytes(inv)], { type: "application/pdf" });
-    const pdfName = `Rekins_${inv.number.replace(/[^\w.-]+/g, "_")}.pdf`;
+    const pdfName = `${pdfFileName(inv)}`;
     if (DRIVE.tok) { try { await driveUploadPdf(pdfName, blob, inv.date); toast("PDF saglabāts Google Drive"); } catch (e) { console.warn(e); toast("PDF neizdevās saglabāt Drive: " + e.message); } }
     await saveFile(pdfName, blob);
   } catch (e) { console.error(e); toast("PDF neizdevās izveidot."); }
@@ -853,11 +870,11 @@ function listView() {
   let rows = S.invoices.slice();
   const sum = { open: 0, overdue: 0, paidYear: 0, n: rows.length };
   const yr = today().slice(0, 4);
-  for (const i of rows) { const t = totals(i, i.seller ? i.seller.vatPayer : vp).total, st = statusOf(i);
+  for (const i of rows) { const t = totals(i, i.seller ? i.seller.vatPayer : vp).pay, st = statusOf(i);
     if (st === "issued") sum.open += t; if (st === "overdue") { sum.open += t; sum.overdue += t; } if (st === "paid" && (i.date || "").startsWith(yr)) sum.paidYear += t; }
   if (S.filter !== "all") rows = rows.filter(i => statusOf(i) === S.filter);
   if (S.q) { const q = S.q.toLowerCase(); rows = rows.filter(i => (i.number + " " + (clientName(i))).toLowerCase().includes(q)); }
-  { const { k, d } = S.sort, v = i => k === "total" ? totals(i, i.seller ? i.seller.vatPayer : vp).total : k === "client" ? clientName(i) : k === "status" ? STATUS[statusOf(i)] : k === "number" ? String(i.number || "") : (i[k] || "");
+  { const { k, d } = S.sort, v = i => k === "total" ? totals(i, i.seller ? i.seller.vatPayer : vp).pay : k === "client" ? clientName(i) : k === "status" ? STATUS[statusOf(i)] : k === "number" ? String(i.number || "") : (i[k] || "");
     rows.sort((a, b) => { const x = v(a), y = v(b); return ((typeof x === "number" ? x - y : String(x).localeCompare(String(y), "lv", { numeric: true })) || String(a.number || "").localeCompare(String(b.number || ""), "lv", { numeric: true })) * d; }); }
   const th = (k, label, cls = "") => `<th data-sort="${k}" class="${cls}" tabindex="0" style="cursor:pointer;user-select:none;white-space:nowrap">${label}${S.sort.k === k ? (S.sort.d > 0 ? " ▲" : " ▼") : ""}</th>`;
   return `<section class="view">
@@ -874,7 +891,7 @@ function listView() {
     </div>
     ${(() => { const p = zipPeriods(); return p.years.length ? `<div class="filters"><select id="zip-p" aria-label="Periods ZIP arhīvam"><option value="all">Visi rēķini</option>${p.years.map(y => `<option value="${y}">Gads ${y}</option>`).join("")}${p.months.map(m => `<option value="${m}">${m.slice(0, 4)}. ${MONTHS[Number(m.slice(5)) - 1].toLowerCase()}</option>`).join("")}</select><button class="btn" data-act="zip">Lejupielādēt ZIP</button></div>` : ""; })()}
     <div class="tablewrap">${rows.length ? `<table class="list"><thead><tr>${th("number", "Numurs")}${th("client", "Klients")}${th("date", "Datums")}${th("due", "Termiņš")}${th("status", "Statuss")}${th("total", "Summa, EUR", "r")}</tr></thead><tbody>
-      ${rows.map(i => { const st = statusOf(i); return `<tr data-open="${i.id}" tabindex="0"><td class="num">${esc(i.number)}${i.example ? ' <span class="pill draft">paraugs</span>' : ""}${i.imported ? ' <span class="pill draft">PDF</span>' : ""}</td><td>${esc(clientName(i))}</td><td class="num">${fmtDate(i.date)}</td><td class="num">${fmtDate(i.due)}</td><td><span class="pill ${st}">${STATUS[st]}</span></td><td class="r num">${money(totals(i, i.seller ? i.seller.vatPayer : vp).total)}</td></tr>`; }).join("")}
+      ${rows.map(i => { const st = statusOf(i); return `<tr data-open="${i.id}" tabindex="0"><td class="num">${esc(i.number)}${i.example ? ' <span class="pill draft">paraugs</span>' : ""}${i.imported ? ' <span class="pill draft">PDF</span>' : ""}${kindOf(i) !== "invoice" ? ` <span class="pill kind">${kindOf(i) === "advance" ? "avanss" : "gala"}</span>` : ""}</td><td>${esc(clientName(i))}</td><td class="num">${fmtDate(i.date)}</td><td class="num">${fmtDate(i.due)}</td><td><span class="pill ${st}">${STATUS[st]}</span></td><td class="r num">${money(totals(i, i.seller ? i.seller.vatPayer : vp).pay)}</td></tr>`; }).join("")}
       </tbody></table>` : `<div class="empty">${S.invoices.length ? "Neviens rēķins neatbilst filtram." : "Vēl nav neviena rēķina. Spied <b>Jauns rēķins</b>, lai izrakstītu pirmo."}</div>`}</div>
   </section>`;
 }
@@ -886,6 +903,7 @@ function editorView() {
     ${setupBanner()}
     <div class="row">
       <button class="btn ghost" data-act="back">← Visi rēķini</button><span class="spacer"></span>
+      ${!inv._new && kindOf(inv) === "advance" ? `<button class="btn" data-act="mk-final">Izveidot gala rēķinu</button>` : ""}
       ${inv._new ? "" : `<button class="btn" data-act="dup">Dublēt</button>`}
       ${inv._new ? "" : (S.confirmDel ? `<span class="confirm">Dzēst rēķinu? <button class="btn danger" data-act="del-yes">Dzēst</button><button class="btn" data-act="del-no">Atcelt</button></span>` : `<button class="btn danger" data-act="del">Dzēst</button>`)}
       <button class="btn" data-act="pdf">Lejupielādēt PDF</button>
@@ -895,12 +913,14 @@ function editorView() {
       <div style="display:grid;gap:16px;min-width:0">
         <div class="panel">
           <div class="grid">
+            <label class="f span2">Rēķina veids<select id="i-kind">${Object.entries(KINDS).map(([k, l]) => `<option value="${k}"${kindOf(inv) === k ? " selected" : ""}>${l}</option>`).join("")}</select></label>
             <label class="f">Rēķina numurs<input type="text" id="i-number" value="${esc(inv.number)}"></label>
             <label class="f">Statuss<select id="i-status">${["draft", "issued", "paid"].map(s => `<option value="${s}"${inv.status === s ? " selected" : ""}>${STATUS[s]}</option>`).join("")}</select></label>
             <label class="f">Izrakstīšanas datums<span class="datebtn"><input type="date" id="i-date" value="${inv.date}"><button class="btn" type="button" data-act="today">Šodien</button></span></label>
             <label class="f">Apmaksāt līdz<input type="date" id="i-due" value="${inv.due}"></label>
             <label class="f span2">Klients<select id="i-client"><option value="">Izvēlies klientu…</option>${S.clients.map(c => `<option value="${c.id}"${c.id === inv.clientId ? " selected" : ""}>${esc(c.name)}</option>`).join("")}</select></label>
           </div>
+          ${kindOf(inv) === "advance" ? `<p class="hint">Avansa rēķinā ieraksti pozīciju, piemēram, “Avanss par …” un avansa summu. Kad darbs pabeigts, atver šo rēķinu un spied <b>Izveidot gala rēķinu</b>.</p>` : ""}
           <p class="hint">Nav klienta sarakstā? <button class="btn ghost" style="padding:0;color:var(--accent)" data-act="goto" data-tab="clients">Pievienot klientu</button></p>
         </div>
         <div class="panel">
@@ -914,18 +934,41 @@ function editorView() {
             <button class="del" data-act="rm-item" data-k="${k}" aria-label="Dzēst rindu" title="Dzēst rindu"${inv.items.length < 2 ? " disabled" : ""}>×</button>
           </div>`).join("")}</div>
           <div class="row" style="justify-content:flex-end;gap:20px"><span class="hint">Bez PVN <b class="num" id="t-net">${money(t.net)}</b></span>${vp ? `<span class="hint">PVN <b class="num" id="t-vat">${money(t.vat)}</b></span>` : ""}<span>Kopā <b class="num" id="t-total" style="font-size:16px">${money(t.total)} €</b></span></div>
+          ${kindOf(inv) === "final" ? `<p class="hint" style="text-align:right">Gala rēķinā pozīcijās ieraksti <b>visu</b> darbu pilnajā summā. Avanss tiks atskaitīts zemāk.</p>` : ""}
         </div>
+        ${kindOf(inv) === "final" ? advPanel(inv, t) : ""}
         <div class="panel"><label class="f">Piezīmes rēķinā<textarea id="i-notes" placeholder="Piemēram, līguma numurs vai pasūtījuma atsauce">${esc(inv.notes)}</textarea></label></div>
       </div>
       <div class="sheet-holder"><span class="eyebrow">Priekšskatījums</span><div class="sheet-frame" id="sheet-frame">${sheetHTML(inv)}</div></div>
     </div>
   </section>`;
 }
+function advCandidates(inv) {
+  const used = new Set(advList(inv).map(a => a.id).filter(Boolean));
+  for (const f of S.invoices) if (f.id !== inv.id && kindOf(f) === "final") for (const a of f.advances || []) if (a.id) used.add(a.id);
+  return S.invoices.filter(i => kindOf(i) === "advance" && i.status !== "draft" && !i.example && !used.has(i.id) && (!inv.clientId || i.clientId === inv.clientId));
+}
+function advPanel(inv, t) {
+  const advs = advList(inv), cand = advCandidates(inv), vpOf = i => i.seller ? i.seller.vatPayer : S.settings.vatPayer;
+  return `<div class="panel">
+    <div class="row"><h2>Apmaksātie avansi</h2><span class="spacer"></span><button class="btn" data-act="adv-manual">+ Ievadīt avansu ar roku</button></div>
+    ${cand.length ? `<label class="f">Pievienot avansa rēķinu no saraksta<select id="adv-pick"><option value="">Izvēlies avansa rēķinu…</option>${cand.map(i => `<option value="${i.id}">Nr. ${esc(i.number)} · ${fmtDate(i.date)} · ${money(totals(i, vpOf(i)).pay)} €${i.status === "paid" ? "" : " · vēl nav atzīmēts kā apmaksāts"}</option>`).join("")}</select></label>` : advs.length ? "" : `<p class="hint">${inv.clientId ? "Šim klientam nav neviena izrakstīta avansa rēķina. Ja avanss izrakstīts citur, spied <b>Ievadīt avansu ar roku</b>." : "Vispirms izvēlies klientu, tad šeit parādīsies viņa avansa rēķini."}</p>`}
+    ${advs.length ? `<div class="items">${advs.map((a, k) => `<div class="adv" data-a="${k}">
+      <label class="f an"><span>Avansa rēķina Nr.</span><input type="text" data-af="number" value="${esc(a.number || "")}"></label>
+      <label class="f"><span>Datums</span><input type="date" data-af="date" value="${esc(a.date || "")}"></label>
+      <label class="f"><span>Summa €</span><input type="number" step="0.01" min="0" data-af="amount" value="${esc(a.amount)}"></label>
+      <button class="del" data-act="adv-rm" data-k="${k}" aria-label="Noņemt avansu" title="Noņemt avansu">×</button></div>`).join("")}</div>` : ""}
+    <div class="row" style="justify-content:flex-end;gap:20px"><span class="hint">Pilnā summa <b class="num" id="t-full">${money(t.total)}</b></span><span class="hint">Avansi <b class="num" id="t-adv">−${money(t.adv)}</b></span><span>Atlikusī summa <b class="num" id="t-pay" style="font-size:16px">${money(t.pay)} €</b></span></div>
+    ${t.pay < 0 ? `<p class="hint" style="color:var(--bad)">Avansi ir lielāki par pilno summu. Pārbaudi summas.</p>` : ""}
+  </div>`;
+}
+function advFrom(i) { return { id: i.id, number: i.number, date: i.date, amount: totals(i, i.seller ? i.seller.vatPayer : S.settings.vatPayer).pay }; }
 function refreshPreview() {
   const inv = S.editing; const frame = $("#sheet-frame"); if (!frame) return;
   frame.innerHTML = sheetHTML(inv); fitSheet();
   const t = totals(inv, S.settings.vatPayer);
   $("#t-net").textContent = money(t.net); if ($("#t-vat")) $("#t-vat").textContent = money(t.vat); $("#t-total").textContent = money(t.total) + " €";
+  if ($("#t-adv")) $("#t-adv").textContent = "−" + money(t.adv); if ($("#t-pay")) $("#t-pay").textContent = money(t.pay) + " €"; if ($("#t-full")) $("#t-full").textContent = money(t.total);
 }
 
 function driveClientsNote() {
@@ -1014,7 +1057,15 @@ document.addEventListener("click", async e => {
   else if (act === "save") await saveInvoice();
   else if (act === "save-issue") { inv.status = "issued"; await saveInvoice(); }
   else if (act === "pdf") { b.disabled = true; b.textContent = "Veido PDF…"; await downloadPDF(inv); b.disabled = false; b.textContent = "Lejupielādēt PDF"; }
-  else if (act === "dup") { const d = JSON.parse(JSON.stringify(inv)); Object.assign(d, { id: uid(), _new: true, status: "draft", date: today(), due: addDays(today(), S.settings.termDays), example: false, autoNumber: true }); d.number = nextNumber(d.date); delete d.seller; delete d.buyer; S.editing = d; render(); toast("Izveidota kopija. Saglabā, lai to paturētu."); }
+  else if (act === "adv-manual") { (inv.advances = inv.advances || []).push({ number: "", date: "", amount: 0 }); render(); }
+  else if (act === "adv-rm") { inv.advances.splice(Number(b.dataset.k), 1); render(); }
+  else if (act === "mk-final") {
+    const d = JSON.parse(JSON.stringify(inv)); Object.assign(d, { id: uid(), _new: true, kind: "final", status: "draft", date: today(), due: addDays(today(), S.settings.termDays), example: false, autoNumber: true, advances: [advFrom(inv)] });
+    d.number = nextNumber(d.date); delete d.seller; delete d.buyer;
+    d.items = d.items.map(it => ({ ...it, desc: String(it.desc || "").replace(/^avanss( par)?\s*/i, "").replace(/^./, c => c.toUpperCase()) }));
+    S.editing = d; S.confirmDel = false; render(); toast("Izveidots gala rēķins. Ieraksti visu darbu pilnajā summā un saglabā.");
+  }
+  else if (act === "dup") { const d = JSON.parse(JSON.stringify(inv)); if (kindOf(d) === "final") d.advances = []; Object.assign(d, { id: uid(), _new: true, status: "draft", date: today(), due: addDays(today(), S.settings.termDays), example: false, autoNumber: true }); d.number = nextNumber(d.date); delete d.seller; delete d.buyer; S.editing = d; render(); toast("Izveidota kopija. Saglabā, lai to paturētu."); }
   else if (act === "del") { S.confirmDel = true; render(); }
   else if (act === "del-no") { S.confirmDel = false; render(); }
   else if (act === "del-yes") { S.invoices = S.invoices.filter(i => i.id !== inv.id); S.editing = null; S.confirmDel = false; await guarded(() => store.del("invoices", inv.id)); if (store.mode === "server") { try { await store.srv("acc/invoices/" + encodeURIComponent(inv.id), { method: "DELETE" }); } catch (e) {} } render(); toast("Rēķins dzēsts"); }
@@ -1035,6 +1086,7 @@ document.addEventListener("input", e => {
   else if (el.id === "i-notes") inv.notes = el.value;
   else if (el.id === "i-date") { const old = inv.date; inv.date = el.value; if (inv.due === addDays(old, S.settings.termDays)) { inv.due = addDays(inv.date, S.settings.termDays); $("#i-due").value = inv.due; } if (inv.autoNumber) { inv.number = nextNumber(inv.date, inv.id); $("#i-number").value = inv.number; } }
   else if (el.id === "i-due") inv.due = el.value;
+  else if (el.dataset.af && el.closest(".adv")) { const a = inv.advances[Number(el.closest(".adv").dataset.a)]; a[el.dataset.af] = el.dataset.af === "amount" ? (el.value === "" ? "" : Number(el.value)) : el.value; }
   else return;
   refreshPreview();
 });
@@ -1043,7 +1095,9 @@ document.addEventListener("change", e => {
   if (el.id === "flt") { S.filter = el.value; render(); return; }
   if (el.name === "c-type") { const f = $("#client-form"); f.dataset.type = el.value; $("#c-name").placeholder = el.value === "person" ? "Jānis Bērziņš" : "SIA Piemērs"; $("#c-name").focus(); return; }
   const inv = S.editing; if (!inv) return;
-  if (el.id === "i-client") inv.clientId = el.value;
+  if (el.id === "i-client") { inv.clientId = el.value; if (kindOf(inv) === "final") { render(); return; } }
+  else if (el.id === "i-kind") { inv.kind = el.value; if (el.value === "final" && !inv.advances) inv.advances = []; render(); return; }
+  else if (el.id === "adv-pick") { const i = S.invoices.find(x => x.id === el.value); if (i) { (inv.advances = inv.advances || []).push(advFrom(i)); render(); } return; }
   else if (el.id === "i-status") inv.status = el.value;
   else if (el.dataset.f === "vat") inv.items[Number(el.closest(".item").dataset.k)].vat = Number(el.value);
   else return;
