@@ -149,6 +149,12 @@ table.list .r { text-align: right }
 @media (max-width: 860px) { .clients { grid-template-columns: minmax(0, 1fr) } }
 .ur { display: grid; gap: 6px; background: var(--surface-2); border-radius: var(--r); padding: 12px }
 .ur-out { display: grid; gap: 2px }
+.ctype { display: flex; gap: 4px; background: var(--surface-2); border-radius: var(--r); padding: 4px; width: fit-content }
+.ctype label { display: flex; align-items: center; gap: 6px; padding: 8px 14px; border-radius: var(--r); cursor: pointer; font-weight: 500 }
+.ctype input { margin: 0 }
+.ctype label:has(input:checked) { background: var(--surface); box-shadow: 0 1px 2px rgba(0,0,0,.12) }
+#client-form[data-type="person"] .only-company, #client-form:not([data-type="person"]) .only-person { display: none }
+.tag { font-size: 12px; color: var(--muted) }
 .ur-hit { text-align: left; border: 0; background: none; padding: 6px 8px; border-radius: var(--r); cursor: pointer; display: grid; gap: 1px }
 .ur-hit:hover, .ur-hit:focus-visible { background: var(--surface) }
 .ur-hit small { color: var(--muted) }
@@ -412,7 +418,7 @@ function sheetHTML(inv) {
         ${kv("Reģ. nr.", seller.regNo)}${vp ? kv("PVN nr.", seller.vatNo) : ""}${kv("Adrese", seller.address)}
         ${kv("Banka", seller.bank)}${kv("SWIFT", seller.swift)}${kv("Konts", seller.iban)}${kv("E-pasts", seller.email)}${kv("Tālr.", seller.phone)}</dl></div>
       <div class="party"><h4>Saņēmējs</h4><div class="n">${esc(buyer.name || "—")}</div><dl>
-        ${kv("Reģ. nr.", buyer.regNo)}${kv("PVN nr.", buyer.vatNo)}${kv("Adrese", buyer.address)}${kv("E-pasts", buyer.email)}</dl></div>
+        ${buyer.type === "person" ? kv("Personas kods", buyer.personCode) : kv("Reģ. nr.", buyer.regNo) + kv("PVN nr.", buyer.vatNo)}${kv("Adrese", buyer.address)}${kv("E-pasts", buyer.email)}</dl></div>
     </div>
     <table>
       <thead><tr><th style="width:28px">Nr.</th><th>Nosaukums</th><th class="r">Daudz.</th><th>Mērv.</th><th class="r">Cena, EUR</th>${vp ? '<th class="r">PVN</th>' : ""}<th class="r">Summa, EUR</th></tr></thead>
@@ -497,7 +503,8 @@ async function buildPdfBytes(inv) {
     yy += 18;
     wrap(p.name || "—", colW, 10.5, bold).forEach(l => { txt(l, x, 10.5, bold, INK, "l", yy); yy += 14; });
     yy += 2;
-    const kv = [["Reģ. nr.", p.regNo], [withVat ? "PVN nr." : "PVN nr.", withVat ? p.vatNo : p.vatNo], ["Adrese", p.address], ["Banka", p.bank], ["SWIFT", p.swift], ["Konts", p.iban], ["E-pasts", p.email], ["Tālr.", p.phone]];
+    const pp = p.type === "person";
+    const kv = [["Reģ. nr.", pp ? "" : p.regNo], ["PVN nr.", pp ? "" : p.vatNo], ["Pers. kods", pp ? p.personCode : ""], ["Adrese", p.address], ["Banka", p.bank], ["SWIFT", p.swift], ["Konts", p.iban], ["E-pasts", p.email], ["Tālr.", p.phone]];
     for (const [k, v] of kv) {
       if (!v || (k === "PVN nr." && withVat === false)) continue;
       const ls = wrap(v, colW - lw, 9);
@@ -928,25 +935,31 @@ function driveClientsNote() {
   return `<p class="hint">Pieslēdzies Google Drive, lai klienti glabātos Sheets tabulā.</p>`;
 }
 function clientsView() {
-  const c = S.clientEditing || { id: "", name: "", regNo: "", vatNo: "", address: "", email: "" };
+  const c = S.clientEditing || { id: "", type: "", name: "", regNo: "", vatNo: "", personCode: "", address: "", email: "" };
+  const person = c.type === "person";
   return `<section class="view"><div class="clients">
     <div class="panel"><div class="row"><h2>Klienti</h2><span class="spacer"></span><button class="btn" data-act="client-new">+ Jauns klients</button></div>
       ${driveClientsNote()}
       ${S.clients.length ? `<div class="tablewrap" style="border:0"><table class="list" style="min-width:0"><thead><tr><th>Nosaukums</th><th>Reģ. nr.</th><th class="r">Rēķini</th></tr></thead><tbody>
-        ${S.clients.slice().sort((a, b) => a.name.localeCompare(b.name, "lv")).map(x => `<tr data-client="${x.id}" tabindex="0"><td>${esc(x.name)}</td><td class="num">${esc(x.regNo)}</td><td class="r num">${S.invoices.filter(i => i.clientId === x.id).length}</td></tr>`).join("")}
+        ${S.clients.slice().sort((a, b) => a.name.localeCompare(b.name, "lv")).map(x => `<tr data-client="${x.id}" tabindex="0"><td>${esc(x.name)}</td><td class="num">${x.type === "person" ? '<span class="tag">Privātpersona</span>' : esc(x.regNo)}</td><td class="r num">${S.invoices.filter(i => i.clientId === x.id).length}</td></tr>`).join("")}
       </tbody></table></div>` : `<div class="empty">Vēl nav klientu. Pievieno pirmo, un tas būs izvēlams rēķinā.</div>`}
     </div>
-    <form class="panel" id="client-form">
+    <form class="panel" id="client-form" data-type="${person ? "person" : "company"}">
       <h2>${c.id ? "Labot klientu" : "Jauns klients"}</h2>
-      <div class="ur">
+      <div class="ctype" role="radiogroup" aria-label="Klienta veids">
+        <label><input type="radio" name="c-type" value="company"${person ? "" : " checked"}> Uzņēmums</label>
+        <label><input type="radio" name="c-type" value="person"${person ? " checked" : ""}> Privātpersona</label>
+      </div>
+      <div class="ur only-company">
         <label class="f">Meklēt Uzņēmumu reģistrā<input type="text" id="ur-q" autocomplete="off" placeholder="Reģistrācijas nr. vai nosaukums"></label>
         <div id="ur-out" class="ur-out"><p class="hint">${UR.state === "missing" && UR.live === false ? "Reģistra dati šeit nav pieejami. Rekvizītus ievadi paši." : "Ieraksti vismaz 3 simbolus, un izvēlies uzņēmumu, lai aizpildītu laukus."}</p></div>
       </div>
       <div class="grid">
-        <label class="f span2">Nosaukums<input type="text" id="c-name" value="${esc(c.name)}" required placeholder="SIA Piemērs"></label>
-        <label class="f">Reģistrācijas nr.<input type="text" id="c-regNo" value="${esc(c.regNo)}" placeholder="40000000000"></label>
-        <label class="f">PVN nr.<input type="text" id="c-vatNo" value="${esc(c.vatNo)}" placeholder="LV40000000000"></label>
-        <label class="f span2">Juridiskā adrese<input type="text" id="c-address" value="${esc(c.address)}"></label>
+        <label class="f span2"><span class="only-company">Nosaukums</span><span class="only-person">Vārds, uzvārds</span><input type="text" id="c-name" value="${esc(c.name)}" required placeholder="${person ? "Jānis Bērziņš" : "SIA Piemērs"}"></label>
+        <label class="f only-company">Reģistrācijas nr.<input type="text" id="c-regNo" value="${esc(c.regNo)}" placeholder="40000000000"></label>
+        <label class="f only-company">PVN nr.<input type="text" id="c-vatNo" value="${esc(c.vatNo)}" placeholder="LV40000000000"></label>
+        <label class="f span2 only-person">Personas kods (nav obligāts)<input type="text" id="c-personCode" value="${esc(c.personCode || "")}" placeholder="010190-12345"></label>
+        <label class="f span2"><span class="only-company">Juridiskā adrese</span><span class="only-person">Adrese (nav obligāta)</span><input type="text" id="c-address" value="${esc(c.address)}"></label>
         <label class="f span2">E-pasts<input type="email" id="c-email" value="${esc(c.email)}"></label>
       </div>
       <div class="row"><button class="btn primary" type="submit">Saglabāt klientu</button>${c.id ? (S.confirmDel ? `<span class="confirm">Dzēst klientu? <button class="btn danger" type="button" data-act="client-del-yes">Dzēst</button><button class="btn" type="button" data-act="del-no">Atcelt</button></span>` : `<button class="btn danger" type="button" data-act="client-del">Dzēst</button>`) : ""}</div>
@@ -1028,6 +1041,7 @@ document.addEventListener("input", e => {
 document.addEventListener("change", e => {
   const el = e.target;
   if (el.id === "flt") { S.filter = el.value; render(); return; }
+  if (el.name === "c-type") { const f = $("#client-form"); f.dataset.type = el.value; $("#c-name").placeholder = el.value === "person" ? "Jānis Bērziņš" : "SIA Piemērs"; $("#c-name").focus(); return; }
   const inv = S.editing; if (!inv) return;
   if (el.id === "i-client") inv.clientId = el.value;
   else if (el.id === "i-status") inv.status = el.value;
@@ -1047,8 +1061,10 @@ document.addEventListener("submit", async e => {
   }
   if (e.target.id === "client-form") {
     const c = { id: S.clientEditing?.id || uid() };
-    for (const k of ["name", "regNo", "vatNo", "address", "email"]) c[k] = $("#c-" + k).value.trim();
-    if (!c.name) { toast("Ievadi klienta nosaukumu"); return; }
+    const person = ($("#client-form input[name=c-type]:checked") || {}).value === "person";
+    for (const k of ["name", "regNo", "vatNo", "personCode", "address", "email"]) c[k] = $("#c-" + k).value.trim();
+    if (person) { c.type = "person"; c.regNo = ""; c.vatNo = ""; } else { c.type = "company"; c.personCode = ""; }
+    if (!c.name) { toast(person ? "Ievadi klienta vārdu un uzvārdu" : "Ievadi klienta nosaukumu"); return; }
     const i = S.clients.findIndex(x => x.id === c.id); if (i >= 0) S.clients[i] = c; else S.clients.push(c);
     S.clientEditing = null; if (await guarded(() => store.put("clients", c))) toast("Klients saglabāts"); render();
   }
@@ -1063,7 +1079,7 @@ async function saveInvoice() {
   if (inv.status !== "draft" && !inv.clientId && !inv.buyer) { toast("Izvēlies klientu"); return; }
   const out = JSON.parse(JSON.stringify(inv)); delete out._new; out.number = out.number.trim(); out.example = false;
   if (out.status === "draft" || !out.seller) { out.seller = { ...S.settings }; delete out.seller.example; }
-  const cl = S.clients.find(c => c.id === out.clientId); if (cl && (out.status === "draft" || !inv.buyer || inv._new)) out.buyer = { name: cl.name, regNo: cl.regNo, vatNo: cl.vatNo, address: cl.address, email: cl.email };
+  const cl = S.clients.find(c => c.id === out.clientId); if (cl && (out.status === "draft" || !inv.buyer || inv._new)) out.buyer = { type: cl.type || "company", name: cl.name, regNo: cl.regNo, vatNo: cl.vatNo, personCode: cl.personCode || "", address: cl.address, email: cl.email };
   const k = S.invoices.findIndex(i => i.id === out.id); if (k >= 0) S.invoices[k] = out; else S.invoices.push(out);
   S.editing = JSON.parse(JSON.stringify(out));
   const ok = await guarded(() => store.put("invoices", out));
